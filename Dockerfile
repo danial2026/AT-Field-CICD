@@ -1,5 +1,12 @@
 FROM node:20-alpine
 
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG http_proxy
+ARG https_proxy
+ARG NO_PROXY
+ARG no_proxy
+
 WORKDIR /app
 
 RUN apk add --no-cache \
