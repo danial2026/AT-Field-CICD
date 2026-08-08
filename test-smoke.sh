@@ -1,5 +1,5 @@
 #!/bin/bash
-# Smoke tests for multi-user / multi-repo AT Field CI
+# Smoke tests for multi-user / multi-repo AT FIELD CICD
 
 set -e
 

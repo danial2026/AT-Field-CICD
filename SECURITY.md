@@ -1,6 +1,6 @@
 # Security
 
-AT Field CI runs builds and deploys on your infrastructure. This document describes
+AT FIELD CICD runs builds and deploys on your infrastructure. This document describes
 the security controls in place and what you must do to deploy it safely.
 
 ## Authentication & Sessions
@@ -137,12 +137,12 @@ chmod 644 ssh/known_hosts
 
 Rotate keys every 90 days. Keys are never logged.
 
-## What AT Field CI does NOT protect against
+## What AT FIELD CICD does NOT protect against
 
 - **Network sniffing** - use an HTTPS reverse proxy.
 - **Secrets you print in scripts** - scripts run with `CI_*` env vars; don't echo them.
 - **Compromised SSH keys or dashboard credentials** - rotate regularly.
-- **Malicious scripts you author** - AT Field CI runs exactly what you configure.
+- **Malicious scripts you author** - AT FIELD CICD runs exactly what you configure.
 
 ## Reporting a Vulnerability
 
@@ -157,7 +157,7 @@ Keep `better-sqlite3`, `express`, `js-yaml`, and `dotenv` pinned and patched.
 
 ## License
 
-AT Field CI is released under the [MIT License](LICENSE). Security considerations
+AT FIELD CICD is released under the [MIT License](LICENSE). Security considerations
 under that license: the software is provided "as is", without warranty of any kind.
 
 ## References

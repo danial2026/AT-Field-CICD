@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regenerate the README screenshots for AT Field CI.
+Regenerate the README screenshots for AT FIELD CICD.
 
 Grabs one shot per dashboard tab: login, repos (dashboard), scripts, logs,
 and audit. Output goes to screenshots/.
