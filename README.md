@@ -4,10 +4,7 @@
 ![Node](https://img.shields.io/badge/node-%3E%3D20-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-> **App version:** `0.0.1` (see [CHANGELOG.md](CHANGELOG.md))
-
-CI/CD platform with a web dashboard. Builds, tests, and deploys with strong
-isolation and controlled pipelines - like an **Absolute Terror Field** for your code.
+CI/CD platform with a web dashboard. Builds, tests, and deploys with strong isolation and controlled pipelines - like an Absolute Terror Field for your projects
 
 ![Dashboard](screenshots/dashboard.png)
 
