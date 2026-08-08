@@ -1,0 +1,34 @@
+# Example configuration for AT Field CI (migrated into the DB on first boot)
+# Copy this to config.yaml and customize
+
+actions:
+  BUILD_DEV:
+    type: script
+    script: build-dev.sh
+  
+  BUILD_PROD:
+    type: script
+    script: build-prod.sh
+  
+  TEST_UNIT:
+    type: script
+    script: test-unit.sh
+  
+  DEPLOY_STAGING:
+    type: deploy
+    method: rsync
+    user: deployer
+    host: staging.example.com
+    source: dist/
+    destination: /var/www/app/
+    sshKey: /app/ssh/id_rsa
+    sshOptions: "-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
+  
+  DEPLOY_PROD:
+    type: deploy
+    method: ssh
+    user: deployer
+    host: prod.example.com
+    command: "cd /var/www/app && git pull origin main && npm run build && npm run migrate && npm restart"
+    sshKey: /app/ssh/id_rsa
+    sshOptions: "-o StrictHostKeyChecking=accept-new"

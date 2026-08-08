@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AT Field CI</title>
+    <link rel="icon" href="at-field-icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- SPLASH -->
+    <div id="splash" class="splash">
+        <div class="splash-inner">
+            <div class="at-field-icon splash-icon" aria-hidden="true">
+                <img src="at-field-icon.svg" width="72" height="72" alt="">
+            </div>
+            <div class="splash-title">AT FIELD CI</div>
+            <div class="splash-loader"><span></span><span></span><span></span></div>
+        </div>
+    </div>
+
+    <!-- GLOBAL LOADING -->
+    <div id="global-loading" class="global-loading hidden" aria-live="polite">
+        <div class="loading-spinner"></div>
+        <span id="global-loading-text">Loading…</span>
+    </div>
+
+    <!-- LOGIN PAGE -->
+    <div id="login-page" class="page login-screen hidden">
+        <div class="login-card">
+            <div class="at-field-icon login-icon" aria-hidden="true">
+                <img src="at-field-icon.svg" width="48" height="48" alt="">
+            </div>
+            <h1>Sign In</h1>
+            <p class="login-sub">AT Field CI Dashboard</p>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="login-username">Username</label>
+                    <input type="text" id="login-username" autocomplete="username" required autofocus>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <div class="password-input">
+                        <input type="password" id="login-password" autocomplete="current-password" required>
+                        <button type="button" class="password-toggle" id="password-toggle" aria-label="Show password">
+                            <svg class="icon-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                            <svg class="icon-eye-off hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                                <line x1="1" y1="1" x2="23" y2="23"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <p id="login-error" class="form-error hidden"></p>
+                <button type="submit" class="btn btn-primary" style="width:100%" id="login-submit">Sign In</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- LOGOUT PAGE -->
+    <div id="logout-page" class="page login-screen hidden">
+        <div class="login-card logout-card">
+            <div class="at-field-icon login-icon" aria-hidden="true">
+                <img src="at-field-icon.svg" width="48" height="48" alt="">
+            </div>
+            <h1>Signed Out</h1>
+            <p class="login-sub" id="logout-message">You have been logged out.</p>
+            <div class="loading-spinner logout-spinner hidden" id="logout-spinner"></div>
+            <button type="button" id="logout-to-login" class="btn btn-primary" style="width:100%">Back to Sign In</button>
+        </div>
+    </div>
+
+    <!-- APP -->
+    <div id="app-shell" class="page container hidden">
+        <header>
+            <div class="header-row">
+                <div class="brand">
+                    <span class="at-field-icon brand-icon" aria-hidden="true">
+                        <img src="at-field-icon.svg" width="28" height="28" alt="">
+                    </span>
+                    <h1>AT FIELD CI</h1>
+                </div>
+                <div class="header-user">
+                    <span id="current-user-label" class="user-label"></span>
+                    <button id="logout-btn" class="btn btn-small" type="button">Logout</button>
+                </div>
+            </div>
+            <div id="status-bar" class="status-bar">
+                <div id="status-info">Ready</div>
+            </div>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-button active" data-tab="repos">Repos</button>
+            <button class="tab-button" data-tab="scripts">Scripts</button>
+            <button class="tab-button" data-tab="logs">Logs</button>
+            <button class="tab-button" data-tab="profile">Profile</button>
+            <button class="tab-button" data-tab="audit" data-staff="1">Audit</button>
+            <button class="tab-button" data-tab="users" data-admin-user="1">Users</button>
+        </nav>
+
+        <!-- REPOS -->
+        <section id="repos-tab" class="tab-content active">
+            <div class="tab-header">
+                <h2>Repositories</h2>
+                <button id="add-repo-btn" class="btn btn-primary" data-staff="1">+ Add Repo</button>
+            </div>
+            <div id="repos-list" class="actions-list">
+                <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
+            </div>
+            <div id="repo-detail" class="repo-detail hidden">
+                <div class="tab-header">
+                    <h2 id="repo-detail-title">Actions</h2>
+                    <div class="item-actions">
+                        <button id="back-repos-btn" class="btn btn-small">← Back</button>
+                        <button id="add-action-btn" class="btn btn-primary btn-small" data-staff="1">+ Action</button>
+                    </div>
+                </div>
+                <div id="repo-meta" class="repo-meta"></div>
+                <div id="actions-list" class="actions-list"></div>
+            </div>
+        </section>
+
+        <!-- SCRIPTS -->
+        <section id="scripts-tab" class="tab-content">
+            <div class="tab-header">
+                <h2>Scripts</h2>
+                <button id="create-script-btn" class="btn btn-primary" data-staff="1">+ Create Script</button>
+            </div>
+            <div id="scripts-list" class="scripts-list">
+                <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
+            </div>
+        </section>
+
+        <!-- LOGS -->
+        <section id="logs-tab" class="tab-content">
+            <div class="tab-header">
+                <h2>Execution Logs</h2>
+                <button id="refresh-logs-btn" class="btn">Refresh</button>
+            </div>
+            <div id="logs-list" class="logs-list">
+                <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
+            </div>
+        </section>
+
+        <!-- PROFILE -->
+        <section id="profile-tab" class="tab-content">
+            <div class="tab-header">
+                <h2>Profile</h2>
+            </div>
+            <div class="profile-card">
+                <div class="profile-row">
+                    <span class="meta-k">Username</span>
+                    <span class="meta-v monospace" id="profile-username">—</span>
+                </div>
+                <div class="profile-row">
+                    <span class="meta-k">Role</span>
+                    <span class="meta-v" id="profile-role">—</span>
+                </div>
+                <div class="profile-row">
+                    <span class="meta-k">Member since</span>
+                    <span class="meta-v" id="profile-created">—</span>
+                </div>
+
+                <h3 class="profile-section-title">Change Password</h3>
+                <form id="profile-form">
+                    <div class="form-group">
+                        <label for="profile-current">Current password</label>
+                        <input type="password" id="profile-current" autocomplete="current-password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="profile-new">New password</label>
+                        <input type="password" id="profile-new" autocomplete="new-password" minlength="8" required>
+                        <span class="help-text">Min 8 characters</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="profile-confirm">Confirm new password</label>
+                        <input type="password" id="profile-confirm" autocomplete="new-password" minlength="8" required>
+                    </div>
+                    <p id="profile-error" class="form-error hidden"></p>
+                    <p id="profile-success" class="form-success hidden"></p>
+                    <button type="submit" class="btn btn-primary" id="profile-submit">Update Password</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- AUDIT -->
+        <section id="audit-tab" class="tab-content">
+            <div class="tab-header">
+                <h2>Audit Log</h2>
+                <button id="refresh-audit-btn" class="btn">Refresh</button>
+            </div>
+            <div id="audit-list" class="logs-list">
+                <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
+            </div>
+        </section>
+
+        <!-- USERS -->
+        <section id="users-tab" class="tab-content">
+            <div class="tab-header">
+                <h2>Users</h2>
+                <button id="add-user-btn" class="btn btn-primary">+ Add User</button>
+            </div>
+            <div id="users-list" class="actions-list">
+                <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
+            </div>
+        </section>
+    </div>
+
+    <!-- REPO MODAL -->
+    <div id="repo-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="repo-modal-title">Add Repository</h2>
+                <button class="close-btn" data-modal="repo-modal" type="button">&times;</button>
+            </div>
+            <form id="repo-form">
+                <input type="hidden" id="repo-edit-id" value="">
+                <div class="form-group">
+                    <label for="repo-name">Display Name</label>
+                    <input type="text" id="repo-name" placeholder="My App" required>
+                </div>
+                <div class="form-group">
+                    <label for="repo-full-name">Full Name (owner/repo)</label>
+                    <input type="text" id="repo-full-name" placeholder="acme/my-app" required>
+                    <span class="help-text">Must match webhook payload repository.full_name</span>
+                </div>
+                <div class="form-group">
+                    <label for="repo-provider">Git Provider</label>
+                    <select id="repo-provider" required>
+                        <option value="github">GitHub</option>
+                        <option value="forgejo">Forgejo</option>
+                        <option value="gitea">Gitea</option>
+                        <option value="gitlab">GitLab</option>
+                        <option value="generic">Generic</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="repo-secret">Webhook Secret</label>
+                    <input type="text" id="repo-secret" placeholder="leave blank to auto-generate" autocomplete="off">
+                </div>
+
+                <div class="form-divider">Private repo access</div>
+                <div class="form-group">
+                    <label for="repo-git-user">Git username</label>
+                    <input type="text" id="repo-git-user" placeholder="github-username" autocomplete="off">
+                    <span class="help-text">Used for private clone (PAT auth)</span>
+                </div>
+                <div class="form-group">
+                    <label for="repo-git-token">Git token / PAT</label>
+                    <input type="password" id="repo-git-token" placeholder="ghp_… or leave blank to keep" autocomplete="new-password">
+                    <span class="help-text" id="repo-git-token-help">Never shown again. Injected as CI_GIT_TOKEN in scripts.</span>
+                </div>
+                <div class="form-group">
+                    <label for="repo-clone-url">Clone URL (optional)</label>
+                    <input type="url" id="repo-clone-url" placeholder="https://github.com/acme/my-app.git">
+                    <span class="help-text">Override default host clone URL. Required for Gitea/Forgejo polling.</span>
+                </div>
+
+                <div class="form-divider">Commit polling (no webhook)</div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="repo-poll-enabled"> Poll for commits
+                    </label>
+                    <span class="help-text">Stores last seen SHA; on startup and on an interval, checks for missed commits and runs matching actions. Works with or instead of webhooks. Needs a git token for private repos.</span>
+                </div>
+                <div class="form-group">
+                    <label for="repo-poll-branch">Poll branch (optional)</label>
+                    <input type="text" id="repo-poll-branch" placeholder="main" autocomplete="off">
+                    <span class="help-text">Leave blank for the repo default branch</span>
+                </div>
+
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="repo-enabled" checked> Enabled
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn" data-modal="repo-modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Repo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ACTION MODAL -->
+    <div id="action-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="action-modal-title">Add Action</h2>
+                <button class="close-btn" data-modal="action-modal" type="button">&times;</button>
+            </div>
+            <form id="action-form">
+                <div class="form-group">
+                    <label for="action-keyword">Keyword</label>
+                    <input type="text" id="action-keyword" placeholder="e.g. BUILD_DEV" required>
+                </div>
+                <div class="form-group">
+                    <label for="action-type">Type</label>
+                    <select id="action-type" required>
+                        <option value="">Select action type</option>
+                        <option value="script">Script</option>
+                        <option value="deploy">Deploy</option>
+                    </select>
+                </div>
+                <div id="script-fields" class="form-group hidden">
+                    <label for="action-script">Script</label>
+                    <select id="action-script"><option value="">Select script</option></select>
+                </div>
+                <div id="deploy-fields" class="form-group hidden">
+                    <label for="deploy-method">Deploy Method</label>
+                    <select id="deploy-method">
+                        <option value="">Select method</option>
+                        <option value="rsync">rsync</option>
+                        <option value="ssh">SSH</option>
+                    </select>
+                    <label for="deploy-user" style="margin-top: 16px;">User</label>
+                    <input type="text" id="deploy-user" placeholder="deployer">
+                    <label for="deploy-host" style="margin-top: 16px;">Host</label>
+                    <input type="text" id="deploy-host" placeholder="prod.example.com">
+                    <label for="deploy-ssh-key" style="margin-top: 16px;">SSH Key Path</label>
+                    <input type="text" id="deploy-ssh-key" placeholder="/app/ssh/id_rsa">
+                    <label for="deploy-ssh-options" style="margin-top: 16px;">SSH Options</label>
+                    <input type="text" id="deploy-ssh-options" placeholder="-o StrictHostKeyChecking=accept-new">
+                    <div id="rsync-fields" class="hidden">
+                        <label for="deploy-source" style="margin-top: 16px;">Source</label>
+                        <input type="text" id="deploy-source" placeholder="dist/">
+                        <label for="deploy-destination" style="margin-top: 16px;">Destination</label>
+                        <input type="text" id="deploy-destination" placeholder="/var/www/app/">
+                    </div>
+                    <div id="ssh-fields" class="hidden">
+                        <label for="deploy-command" style="margin-top: 16px;">Command</label>
+                        <textarea id="deploy-command" rows="3" placeholder="cd /app && npm run deploy"></textarea>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn" data-modal="action-modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Action</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- SCRIPT MODAL -->
+    <div id="script-modal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2 id="script-modal-title">Create Script</h2>
+                <button class="close-btn" data-modal="script-modal" type="button">&times;</button>
+            </div>
+            <form id="script-form">
+                <div class="form-group">
+                    <label for="script-name">Script Name</label>
+                    <input type="text" id="script-name" placeholder="build.sh" required>
+                </div>
+                <div class="form-group">
+                    <label for="script-content">Content</label>
+                    <textarea id="script-content" class="monospace" rows="18" required placeholder="#!/bin/bash&#10;set -e&#10;# clone: git clone &quot;$CI_CLONE_AUTH_URL&quot; workdir"></textarea>
+                    <span class="help-text">Env: CI_GIT_USER, CI_GIT_TOKEN, CI_CLONE_AUTH_URL, CI_REPO, CI_KEYWORD</span>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn" data-modal="script-modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="script-submit-btn">Save Script</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- USER MODAL -->
+    <div id="user-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="user-modal-title">Add User</h2>
+                <button class="close-btn" data-modal="user-modal" type="button">&times;</button>
+            </div>
+            <form id="user-form">
+                <input type="hidden" id="user-edit-id" value="">
+                <div class="form-group">
+                    <label for="user-username">Username</label>
+                    <input type="text" id="user-username" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="user-password">Password</label>
+                    <input type="password" id="user-password" autocomplete="new-password">
+                    <span class="help-text" id="user-password-help">Min 8 characters</span>
+                </div>
+                <div class="form-group">
+                    <label for="user-role">Role</label>
+                    <select id="user-role">
+                        <option value="devops">Devops</option>
+                        <option value="developer">Developer</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn" data-modal="user-modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- SECRET MODAL -->
+    <div id="secret-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Webhook Secret</h2>
+                <button class="close-btn" data-modal="secret-modal" type="button">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="help-text modal-lead">Copy into your git host webhook settings.</p>
+                <pre id="secret-value" class="secret-box monospace"></pre>
+                <p id="secret-webhook-url" class="help-text modal-follow"></p>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-primary" data-modal="secret-modal">Done</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- LOG VIEWER -->
+    <div id="log-modal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2 id="log-modal-title">Log Viewer</h2>
+                <button class="close-btn" data-modal="log-modal" type="button">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="log-content" class="log-viewer">
+                    <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CONFIRM -->
+    <div id="confirm-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Confirm</h2>
+                <button class="close-btn" data-modal="confirm-modal" type="button">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="confirm-message" class="confirm-message">Are you sure?</p>
+                <div class="form-actions">
+                    <button type="button" class="btn" data-modal="confirm-modal">Cancel</button>
+                    <button type="button" id="confirm-yes" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- outer shield -->
+  <polygon points="50,8 79.7,20.3 92,50 79.7,79.7 50,92 20.3,79.7 8,50 20.3,20.3"
+    fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linejoin="miter" />
+
+  <!-- middle field -->
+  <polygon points="50,20 71.2,28.8 80,50 71.2,71.2 50,80 28.8,71.2 20,50 28.8,28.8"
+    fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linejoin="miter" />
+
+  <!-- inner core -->
+  <polygon points="50,32 62.7,37.3 68,50 62.7,62.7 50,68 37.3,62.7 32,50 37.3,37.3"
+    fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linejoin="miter" />
+
+  <!-- energy core -->
+  <circle cx="50" cy="50" r="3" fill="#ffffff" />
+</svg>

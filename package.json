@@ -1,0 +1,40 @@
+{
+  "name": "at-field-ci",
+  "version": "0.0.1",
+  "description": "AT Field CI - CI/CD platform with a web dashboard. Builds, tests, and deploys with strong isolation and controlled pipelines.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "bash test-smoke.sh",
+    "audit": "npm audit"
+  },
+  "keywords": [
+    "ci",
+    "cd",
+    "ci-cd",
+    "webhook",
+    "github",
+    "self-hosted",
+    "deployment",
+    "automation",
+    "pipeline"
+  ],
+  "author": "danial",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/danial2026/AT-Field-CI"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "js-yaml": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=9.0.0"
+  }
+}

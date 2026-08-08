@@ -1,0 +1,35 @@
+services:
+  at-field-ci:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: at-field-ci
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-me}
+      - DB_PATH=/app/data/at-field-ci.db
+      - COOKIE_SECURE=${COOKIE_SECURE:-0}
+    volumes:
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+      - ./logs:/app/logs
+      - ./ssh:/app/ssh:ro
+      - /etc/ssh/known_hosts:/app/ssh/known_hosts:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+        reservations:
+          cpus: '1'
+          memory: 256M
