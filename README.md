@@ -1,7 +1,6 @@
 # AT Field CI
 
-CI/CD platform with a web dashboard. Builds, tests, and deploys with strong
-isolation and controlled pipelines - like an **Absolute Terror Field** for your code.
+CI/CD platform with a web dashboard. Builds, tests, and deploys with strong isolation and controlled pipelines - like an Absolute Terror Field for your projects
 
 ![Dashboard](screenshots/dashboard.png)
 
