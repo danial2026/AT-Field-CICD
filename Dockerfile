@@ -29,7 +29,7 @@ COPY server.js ./
 COPY lib/ ./lib/
 COPY public/ ./public/
 
-RUN mkdir -p /app/scripts /app/logs /app/ssh /app/data
+RUN mkdir -p /app/scripts /app/logs /app/ssh /app/data && touch /app/ssh/known_hosts
 
 EXPOSE 3000
 
