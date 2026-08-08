@@ -31,6 +31,10 @@ COPY public/ ./public/
 
 RUN mkdir -p /app/scripts /app/logs /app/ssh /app/data && touch /app/ssh/known_hosts
 
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
