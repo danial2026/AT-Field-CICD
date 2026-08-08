@@ -24,10 +24,10 @@
 #     rollback on failure for the git/compose steps.
 #
 # Usage:
-#   cd /home/danial/docker_containers/AT-Field-CICD
+#   cd /path/to/your/repo
 #   bash scripts/proxy/server-setup-proxy.sh
 #
-#   PROXY_HOST=192.168.0.103 PROXY_PORT=8888 bash scripts/proxy/server-setup-proxy.sh
+#   PROXY_HOST=<your-mac-ip> PROXY_PORT=8888 bash scripts/proxy/server-setup-proxy.sh
 #   DRY_RUN=1 bash scripts/proxy/server-setup-proxy.sh        # show actions only
 #   FORCE=1  bash scripts/proxy/server-setup-proxy.sh         # skip pre-flight
 #   bash scripts/proxy/server-setup-proxy.sh --help
@@ -41,12 +41,28 @@ readonly SCRIPT_VERSION="1.0.0"
 readonly LOCK="/tmp/at-field-server-proxy-setup.lock"
 readonly MARKER="# AT-Field CI: LAN proxy bypass (added by server-setup-proxy.sh)"
 
-PROXY_HOST="${PROXY_HOST:-192.168.0.103}"
+PROXY_HOST="${PROXY_HOST:-}"
 PROXY_PORT="${PROXY_PORT:-8888}"
 DRY_RUN="${DRY_RUN:-0}"
 FORCE="${FORCE:-0}"
+TEST_GIT_REPO="${TEST_GIT_REPO:-https://github.com/octocat/Hello-World.git}"
+# ---------- prompt for PROXY_HOST if not set ----------------------------------
+if [ -z "${PROXY_HOST:-}" ]; then
+  if [ -t 0 ]; then
+    printf 'Enter your Mac LAN IP (PROXY_HOST): '
+    read -r PROXY_HOST
+  fi
+  [ -n "${PROXY_HOST:-}" ] || { err "PROXY_HOST is required. Set via env or run interactively."; exit 5; }
+fi
+info "Proxy host: $PROXY_HOST"
+
 PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
-NO_PROXY_VAL="localhost,127.0.0.1,192.168.0.0/16"
+_LAN_PREFIX="$(echo "$PROXY_HOST" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
+if [ -n "${_LAN_PREFIX:-}" ]; then
+  NO_PROXY_VAL="${NO_PROXY_VAL:-localhost,127.0.0.1,${_LAN_PREFIX}.0/24}"
+else
+  NO_PROXY_VAL="${NO_PROXY_VAL:-localhost,127.0.0.1}"
+fi
 
 # ---------- helpers ----------------------------------------------------------
 log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -269,7 +285,7 @@ if [ "$DRY_RUN" = "0" ]; then
   fi
   # Functional test: git through proxy
   info "  functional test: git ls-remote via proxy..."
-  if timeout 30 git ls-remote https://github.com/danial2026/AT-Field-CICD HEAD >/dev/null 2>&1; then
+  if timeout 30 git ls-remote "$TEST_GIT_REPO" HEAD >/dev/null 2>&1; then
     info "  OK: git can reach github via proxy."
   else
     warn "  git ls-remote failed (proxy may be down; config is still applied)."
@@ -286,8 +302,8 @@ cat <<EOF
 $( [ "$DRY_RUN" = "1" ] && echo " (DRY RUN — nothing was actually changed)" )
  Next:
    cp .env.example .env        # set ADMIN_USER / ADMIN_PASSWORD
-   docker-compose up -d --build
-   docker exec at-field-ci git ls-remote https://github.com/danial2026/AT-Field-CICD HEAD
+    docker-compose up -d --build
+    docker exec at-field-ci git ls-remote "$TEST_GIT_REPO" HEAD
 
  Undo: bash scripts/proxy/server-remove-proxy.sh
 EOF

@@ -13,43 +13,42 @@ and how to set it up or tear it down yourself using the scripts in
 
 ## 1. The problem
 
-The server is on **TCI / Mokhaberat** (Iran's state ISP). That network applies
-**DPI (deep packet inspection)** filtering on HTTPS traffic to sites like
-`github.com`: the TCP connection opens, but the TLS handshake stalls, so
-`git clone https://github.com/...` hangs forever until you press `Ctrl+C`.
+The server is on an ISP that applies **DPI (deep packet inspection)** filtering
+on HTTPS traffic to sites like `github.com`: the TCP connection opens, but the
+TLS handshake stalls, so `git clone https://github.com/...` hangs forever until
+you press `Ctrl+C`.
 
 The filtering is **intermittent** — a test `curl` sometimes returns `200`
 — which is exactly why a one-off "does it work now?" check is unreliable but
 a real `git clone` still hangs.
 
-The laptop, meanwhile, runs **OpenVPN Connect**, which routes GitHub through a
-VPN tunnel (`utun4`). So the laptop reaches GitHub fine; the server does not.
+The laptop, meanwhile, runs a VPN client which routes GitHub through a VPN
+tunnel. So the laptop reaches GitHub fine; the server does not.
 
 ---
 
 ## 2. The solution (architecture)
 
 ```
-   Ubuntu server (danial-t400)                    Mac laptop (192.168.0.103)
-   ┌───────────────────────┐                      ┌──────────────────────┐
-   │ git                   │                       │ OpenVPN Connect      │
-   │ docker daemon         │  HTTP proxy request   │   tunnel (utun4)     │
-   │ at-field-ci container │ ───────────────────► │        ▲             │
-   │  (git clone in builds)│   http://192.168.0.103:8888  │             │
-   └───────────────────────┘                      │ tinyproxy :8888      │
-                       ▲                          │   (LAN-facing HTTP   │
-                       │                          │    proxy, brew svc)  │
-                       │                          └──────────────────────┘
-                       │                                     │
-                   TCI / Mokhaberat                        VPN exit
-                   (filtered, GitHub blocked)          (unfiltered)
+   Ubuntu server                              Mac laptop
+   ┌───────────────────────┐                  ┌──────────────────────┐
+   │ git                   │                   │ VPN client           │
+   │ docker daemon         │  HTTP proxy       │   tunnel             │
+   │ at-field-ci container │  request          │        ▲             │
+   │  (git clone in builds)│ ────────────────► │ tinyproxy            │
+   └───────────────────────┘                   │   (LAN-facing HTTP   │
+                        ▲                      │    proxy, brew svc)  │
+                        │                      └──────────────────────┘
+                        │                                 │
+                    Filtered ISP                    VPN exit
+                    (GitHub blocked)           (unfiltered)
 ```
 
 We install **tinyproxy** on the Mac (a tiny HTTP proxy). Its outbound traffic
 follows the Mac's normal routing — which, for GitHub, goes through the VPN
 tunnel. We then point the server's `git`, the Docker daemon, and the CI
-container at `http://192.168.0.103:8888`. Everything that was hanging now flows
-through the Mac's VPN.
+container at the proxy. Everything that was hanging now flows through the Mac's
+VPN.
 
 Why an HTTP proxy and not a SOCKS proxy: `git`, `docker`, `npm`, and `apt` all
 understand `HTTP_PROXY`/`HTTPS_PROXY` natively, so no extra bridging software is
@@ -59,25 +58,25 @@ needed.
 
 ## 3. What was changed during the session (who / what / why)
 
-### A. On the Mac (`192.168.0.103`) — the laptop
+### A. On the Mac — the laptop
 
 | Command | Why |
 |---|---|
 | `brew install tinyproxy` | Install a small LAN-facing HTTP proxy. |
-| Edited `/opt/homebrew/etc/tinyproxy/tinyproxy.conf`: added `Allow 192.168.0.0/16` | Permit devices on the home LAN to use the proxy (default only allows `127.0.0.1`). `Listen` was left commented out so it binds to all interfaces. |
+| Edited tinyproxy.conf: added `Allow <your-lan-subnet>` | Permit devices on the home LAN to use the proxy (default only allows `127.0.0.1`). `Listen` was left commented out so it binds to all interfaces. |
 | `brew services start tinyproxy` | Run it as a background service that auto-restarts at login. |
 | `curl -x http://127.0.0.1:8888 https://github.com` → `200` | Verify the proxy works and reaches GitHub through the VPN. |
-| `curl -x http://192.168.0.103:8888 https://github.com` → `200` | Verify it's reachable on the LAN IP (catches macOS firewall issues). |
-| `route -n get 140.82.121.3` → `interface: utun4` | Confirmed the Mac actually routes GitHub through the VPN (not directly via TCI). |
+| `curl -x http://<your-mac-lan-ip>:8888 https://github.com` → `200` | Verify it's reachable on the LAN IP (catches firewall issues). |
+| `route -n get <github-ip>` → `interface: utun4` | Confirmed the Mac actually routes GitHub through the VPN (not directly via the ISP). |
 
-### B. On the Ubuntu server (`danial-t400`) — over SSH
+### B. On the Ubuntu server — over SSH
 
 | Command | Why |
 |---|---|
 | `curl https://github.com` (direct) → `200` | Showed the block is intermittent (sometimes works, but clones still hang). |
-| `git config --global http.proxy http://192.168.0.103:8888` + `https.proxy` | Make all host-level `git` operations go through the proxy. |
+| `git config --global http.proxy http://<your-mac-lan-ip>:8888` + `https.proxy` | Make all host-level `git` operations go through the proxy. |
 | `git config --global http.version HTTP/1.1` | Force HTTP/1.1 (some proxies/DPI choke on HTTP/2 multiplexing). |
-| `timeout 120 git clone https://github.com/danial2026/AT-Field-CICD` | The actual fix — **clone succeeded** through the proxy. |
+| `timeout 120 git clone <your-repo-url>` | The actual fix — **clone succeeded** through the proxy. |
 | Added `no_proxy`/`NO_PROXY` to `~/.zshrc` | Keep LAN traffic direct (don't accidentally proxy local services). |
 | Created `docker-compose.override.yml` with `HTTP_PROXY`/`HTTPS_PROXY` env | The CI platform runs in a container and spawns `git clone` inside build scripts; the container needs the proxy env too. This file is auto-merged by docker-compose and is **not** tracked by git. |
 | `docker-compose config` (checked merged env) | Confirmed the proxy env is present in the effective config. |
@@ -115,21 +114,23 @@ bash scripts/proxy/mac-setup-tinyproxy.sh
 ```
 
 Make sure your **VPN is connected** first — tinyproxy only forwards traffic;
-the VPN does the unblocking. The script prints the proxy URL to give to the
-server (e.g. `http://192.168.0.103:8888`).
+the VPN does the unblocking. The script will prompt for your LAN subnet (or set
+`LAN_SUBNET` in the environment). It prints the proxy URL to give to the server
+(e.g. `http://<your-mac-lan-ip>:8888`).
 
 ### Step 2 — On the server (once)
 
 ```bash
-cd /home/danial/docker_containers/AT-Field-CICD
+cd /path/to/your/repo
 bash scripts/proxy/server-setup-proxy.sh
 ```
 
-It will prompt for your sudo password when configuring the Docker daemon.
-Defaults: `PROXY_HOST=192.168.0.103`, `PROXY_PORT=8888`. Override if needed:
+The script will prompt for your Mac's LAN IP (or set `PROXY_HOST` in the
+environment). It will also prompt for your sudo password when configuring the
+Docker daemon.
 
 ```bash
-PROXY_HOST=192.168.0.103 PROXY_PORT=8888 bash scripts/proxy/server-setup-proxy.sh
+PROXY_HOST=<your-mac-lan-ip> PROXY_PORT=8888 bash scripts/proxy/server-setup-proxy.sh
 ```
 
 Other options: `DRY_RUN=1` (show actions, change nothing), `FORCE=1` (skip the
@@ -140,7 +141,7 @@ pre-flight reachability check), `--help`, `--version`.
 ```bash
 cp .env.example .env        # edit ADMIN_USER / ADMIN_PASSWORD
 docker-compose up -d --build
-docker exec at-field-ci git ls-remote https://github.com/danial2026/AT-Field-CICD HEAD
+docker exec at-field-ci git ls-remote "$TEST_GIT_REPO" HEAD
 ```
 
 ---
@@ -153,9 +154,9 @@ If you prefer to do the Docker daemon part by hand, run this on the server:
 sudo mkdir -p /etc/systemd/system/docker.service.d
 sudo tee /etc/systemd/system/docker.service.d/http-proxy.conf >/dev/null <<'EOF'
 [Service]
-Environment="HTTP_PROXY=http://192.168.0.103:8888"
-Environment="HTTPS_PROXY=http://192.168.0.103:8888"
-Environment="NO_PROXY=localhost,127.0.0.1,192.168.0.0/16"
+Environment="HTTP_PROXY=http://<your-mac-lan-ip>:8888"
+Environment="HTTPS_PROXY=http://<your-mac-lan-ip>:8888"
+Environment="NO_PROXY=localhost,127.0.0.1,<your-lan-subnet>"
 EOF
 sudo systemctl daemon-reload && sudo systemctl restart docker
 ```
@@ -165,7 +166,7 @@ sudo systemctl daemon-reload && sudo systemctl restart docker
 ## 6. How to undo / remove the proxy from the server
 
 ```bash
-cd /home/danial/docker_containers/AT-Field-CICD
+cd /path/to/your/repo
 bash scripts/proxy/server-remove-proxy.sh
 ```
 
@@ -175,7 +176,7 @@ This removes:
 - `docker-compose.override.yml`,
 - the Docker daemon drop-in (needs sudo), and restarts Docker.
 
-After this the server uses its direct TCI connection again — GitHub may start
+After this the server uses its direct connection again — GitHub may start
 hanging once more.
 
 ### To undo on the Mac (stop sharing the proxy):
@@ -192,7 +193,7 @@ brew uninstall tinyproxy
 - **The Mac must be on and the VPN connected.** If either is down, the server's
   `git`/`docker` will fail (the proxy won't bypass anything). tinyproxy itself
   auto-starts at login via `brew services`.
-- **`192.168.0.103` is DHCP.** If the Mac's LAN IP changes, update it in three
+- **The Mac IP is likely DHCP.** If the Mac's LAN IP changes, update it in three
   places: `git config --global`, `docker-compose.override.yml`, and the Docker
   daemon drop-in (`/etc/systemd/system/docker.service.d/http-proxy.conf`). Then
   `sudo systemctl restart docker`. Easiest: just re-run
@@ -202,8 +203,8 @@ brew uninstall tinyproxy
   running on the server itself. The current laptop-proxy approach is the
   simplest fix using what you already have.
 - **If `git clone` still hangs** after setup: confirm the proxy is reachable
-  from the server with `curl -x http://192.168.0.103:8888 https://github.com`,
+  from the server with `curl -x http://<your-mac-lan-ip>:8888 https://github.com`,
   and confirm the Mac's VPN is up with `curl https://github.com` on the Mac.
 - **GitHub auth inside the container** uses the `CI_CLONE_AUTH_URL` / git token
-  mechanism in `server.js` (see around `server.js:629-677`); that path now also
-  flows through the proxy via the container env.
+  mechanism in `server.js`; that path now also flows through the proxy via the
+  container env.

@@ -16,7 +16,7 @@
 #     verification that each piece is actually gone.
 #
 # Usage:
-#   cd /home/danial/docker_containers/AT-Field-CICD
+#   cd /path/to/your/repo
 #   bash scripts/proxy/server-remove-proxy.sh
 #   DRY_RUN=1 bash scripts/proxy/server-remove-proxy.sh   # show actions only
 #   bash scripts/proxy/server-remove-proxy.sh --help
@@ -93,7 +93,7 @@ for RC in "$HOME/.zshrc" "$HOME/.bashrc"; do
   if grep -qF "$MARKER" "$RC"; then
     cp -a "$RC" "$RC.bak.$(date +%Y%m%d%H%M%S)"
     # Delete the 4-line managed block (marker comment + 2 exports + leading blank)
-    sed -i "/^${MARKER}\$/,/^export NO_PROXY=localhost,127.0.0.1,192.168.0.0\/16\$/d" "$RC"
+    sed -i "/^${MARKER}\$/,/^export NO_PROXY=/d" "$RC"
     info "    cleaned $RC (backup saved)"
   else
     info "    nothing to clean in $RC"
