@@ -1,0 +1,31 @@
+# Ignored files
+
+# Environment and secrets
+.env
+.env.local
+*.pem
+ssh/*
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Logs and runtime
+logs/
+*.log
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
