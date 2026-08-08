@@ -1521,7 +1521,7 @@ setInterval(() => {
 startPollLoop();
 
 app.listen(PORT, () => {
-  console.log(`[SERVER] AT Field CI on :${PORT}`);
+  console.log(`[SERVER] AT FIELD CICD on :${PORT}`);
   console.log(`[SERVER] DB: ${db.DB_PATH}`);
   console.log(`[SERVER] Dashboard: http://localhost:${PORT}`);
   console.log(`[SERVER] Webhook: POST /webhook or /webhook/:slug`);

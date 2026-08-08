@@ -2,10 +2,10 @@
 
 ## [0.0.1] - 2026-08-09
 
-First release under the **AT Field CI** name (formerly `ci-webhook`).
+First release under the **AT FIELD CICD** name (formerly `ci-webhook`).
 
 ### Renamed & Rebranded
-- Project renamed `ci-webhook` to **AT Field CI** across package, server, dashboard,
+- Project renamed `ci-webhook` to **AT FIELD CICD** across package, server, dashboard,
   Docker, libs, and configs.
 - Version reset to `0.0.1`.
 - Default DB path changed to `data/at-field-ci.db` (old DB auto-discovered on boot).
@@ -19,7 +19,7 @@ First release under the **AT Field CI** name (formerly `ci-webhook`).
 - Rewrote `SECURITY.md` to match the DB-backed/session/RBAC architecture.
 
 ### Dashboard
-- New branding: title, splash, login, and header updated to **AT Field CI**.
+- New branding: title, splash, login, and header updated to **AT FIELD CICD**.
 - Single icon source: `public/at-field-icon.svg` drives the favicon and all in-app
   icons (splash, login, logout, header). Change one file to rebrand everywhere.
 - Show/hide password toggle on the login screen.

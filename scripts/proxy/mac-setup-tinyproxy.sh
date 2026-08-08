@@ -19,7 +19,7 @@
 #
 # Usage:
 #   bash scripts/proxy/mac-setup-tinyproxy.sh
-#   PROXY_PORT=8888 LAN_SUBNET=192.168.0.0/16 bash scripts/proxy/mac-setup-tinyproxy.sh
+#   PROXY_PORT=8888 LAN_SUBNET=<your-lan-subnet> bash scripts/proxy/mac-setup-tinyproxy.sh
 #   DRY_RUN=1 bash scripts/proxy/mac-setup-tinyproxy.sh    # show actions, change nothing
 #   bash scripts/proxy/mac-setup-tinyproxy.sh --help
 #
@@ -28,13 +28,26 @@
 # =============================================================================
 set -euo pipefail
 
+cat <<'BANNER'
+
+
+ ████▄██▄   ▄█████▄   ▄█████▄
+ ██ ██ ██   ▀ ▄▄▄██  ██▀    ▀
+ ██ ██ ██  ▄██▀▀▀██  ██
+ ██ ██ ██  ██▄▄▄███  ▀██▄▄▄▄█
+ ▀▀ ▀▀ ▀▀   ▀▀▀▀ ▀▀    ▀▀▀▀▀
+
+
+BANNER
+
 readonly SCRIPT_VERSION="1.0.0"
 readonly CONF="/opt/homebrew/etc/tinyproxy/tinyproxy.conf"
 readonly LOCK="/tmp/at-field-mac-tinyproxy.lock"
 
 PROXY_PORT="${PROXY_PORT:-8888}"
-LAN_SUBNET="${LAN_SUBNET:-192.168.0.0/16}"
+LAN_SUBNET="${LAN_SUBNET:-}"
 DRY_RUN="${DRY_RUN:-0}"
+TEST_GIT_REPO="${TEST_GIT_REPO:-https://github.com/octocat/Hello-World.git}"
 
 # ---------- helpers ----------------------------------------------------------
 log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -79,6 +92,16 @@ case "$PROXY_PORT" in
   ''|*[!0-9]*) err "PROXY_PORT must be numeric (got '$PROXY_PORT')"; exit 5 ;;
 esac
 [ "$PROXY_PORT" -ge 1 ] && [ "$PROXY_PORT" -le 65535 ] || { err "PROXY_PORT out of range: $PROXY_PORT"; exit 5; }
+
+# ---------- prompt for LAN_SUBNET if not set -----------------------------------
+if [ -z "${LAN_SUBNET:-}" ]; then
+  if [ -t 0 ]; then
+    printf 'Enter your LAN subnet (e.g. 192.168.1.0/24): '
+    read -r LAN_SUBNET
+  fi
+  [ -n "${LAN_SUBNET:-}" ] || { err "LAN_SUBNET is required. Set via env or run interactively."; exit 5; }
+fi
+info "LAN subnet: $LAN_SUBNET"
 
 # ---------- pre-flight: is a VPN tunnel up? -----------------------------------
 info "Pre-flight: checking for an active VPN tunnel..."

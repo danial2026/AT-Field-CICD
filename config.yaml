@@ -1,4 +1,4 @@
-# Example configuration for AT Field CI (migrated into the DB on first boot)
+# Example configuration for AT FIELD CICD (migrated into the DB on first boot)
 # Copy this to config.yaml and customize
 
 actions:
