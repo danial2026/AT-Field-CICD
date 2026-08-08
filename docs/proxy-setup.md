@@ -30,18 +30,16 @@ tunnel. So the laptop reaches GitHub fine; the server does not.
 ## 2. The solution (architecture)
 
 ```
-   Ubuntu server                              Mac laptop
-   ┌───────────────────────┐                  ┌──────────────────────┐
-   │ git                   │                   │ VPN client           │
-   │ docker daemon         │  HTTP proxy       │   tunnel             │
-   │ at-field-ci container │  request          │        ▲             │
-   │  (git clone in builds)│ ────────────────► │ tinyproxy            │
-   └───────────────────────┘                   │   (LAN-facing HTTP   │
-                        ▲                      │    proxy, brew svc)  │
-                        │                      └──────────────────────┘
-                        │                                 │
-                    Filtered ISP                    VPN exit
-                    (GitHub blocked)           (unfiltered)
+  Ubuntu server                              Mac laptop
+  ┌────────────────────────┐              ┌────────────────────────┐
+  │ git                    │              │ VPN client             │
+  │ docker daemon          │  HTTP proxy  │   tunnel (utun4)       │
+  │ at-field-ci container  │  request     │ tinyproxy :8888        │
+  │  (git clone in builds) │─────────────►│   (LAN-facing HTTP)    │
+  └───────────┬────────────┘              └────────────────────────┘
+              │                                        │
+         Filtered ISP                             VPN exit
+        (GitHub blocked)                       (unfiltered)
 ```
 
 We install **tinyproxy** on the Mac (a tiny HTTP proxy). Its outbound traffic

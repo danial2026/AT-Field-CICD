@@ -28,6 +28,18 @@
 # =============================================================================
 set -euo pipefail
 
+cat <<'BANNER'
+
+
+ ████▄██▄   ▄█████▄   ▄█████▄
+ ██ ██ ██   ▀ ▄▄▄██  ██▀    ▀
+ ██ ██ ██  ▄██▀▀▀██  ██
+ ██ ██ ██  ██▄▄▄███  ▀██▄▄▄▄█
+ ▀▀ ▀▀ ▀▀   ▀▀▀▀ ▀▀    ▀▀▀▀▀
+
+
+BANNER
+
 readonly SCRIPT_VERSION="1.0.0"
 readonly CONF="/opt/homebrew/etc/tinyproxy/tinyproxy.conf"
 readonly LOCK="/tmp/at-field-mac-tinyproxy.lock"

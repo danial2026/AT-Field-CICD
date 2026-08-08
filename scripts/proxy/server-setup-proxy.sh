@@ -37,6 +37,19 @@
 # =============================================================================
 set -euo pipefail
 
+cat <<'BANNER'
+
+   ▄▄▄▄
+ ▄█▀▀▀▀█
+ ██▄        ▄████▄    ██▄████  ██▄  ▄██   ▄████▄    ██▄████
+  ▀████▄   ██▄▄▄▄██   ██▀       ██  ██   ██▄▄▄▄██   ██▀
+      ▀██  ██▀▀▀▀▀▀   ██        ▀█▄▄█▀   ██▀▀▀▀▀▀   ██
+ █▄▄▄▄▄█▀  ▀██▄▄▄▄█   ██         ████    ▀██▄▄▄▄█   ██
+  ▀▀▀▀▀      ▀▀▀▀▀    ▀▀          ▀▀       ▀▀▀▀▀    ▀▀
+
+
+BANNER
+
 readonly SCRIPT_VERSION="1.0.0"
 readonly LOCK="/tmp/at-field-server-proxy-setup.lock"
 readonly MARKER="# AT-Field CI: LAN proxy bypass (added by server-setup-proxy.sh)"
@@ -46,23 +59,6 @@ PROXY_PORT="${PROXY_PORT:-8888}"
 DRY_RUN="${DRY_RUN:-0}"
 FORCE="${FORCE:-0}"
 TEST_GIT_REPO="${TEST_GIT_REPO:-https://github.com/octocat/Hello-World.git}"
-# ---------- prompt for PROXY_HOST if not set ----------------------------------
-if [ -z "${PROXY_HOST:-}" ]; then
-  if [ -t 0 ]; then
-    printf 'Enter your Mac LAN IP (PROXY_HOST): '
-    read -r PROXY_HOST
-  fi
-  [ -n "${PROXY_HOST:-}" ] || { err "PROXY_HOST is required. Set via env or run interactively."; exit 5; }
-fi
-info "Proxy host: $PROXY_HOST"
-
-PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
-_LAN_PREFIX="$(echo "$PROXY_HOST" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
-if [ -n "${_LAN_PREFIX:-}" ]; then
-  NO_PROXY_VAL="${NO_PROXY_VAL:-localhost,127.0.0.1,${_LAN_PREFIX}.0/24}"
-else
-  NO_PROXY_VAL="${NO_PROXY_VAL:-localhost,127.0.0.1}"
-fi
 
 # ---------- helpers ----------------------------------------------------------
 log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -120,10 +116,25 @@ case "$PROXY_PORT" in
 esac
 [ "$PROXY_PORT" -ge 1 ] && [ "$PROXY_PORT" -le 65535 ] || { err "PROXY_PORT out of range: $PROXY_PORT"; exit 5; }
 
-# Validate host (basic)
+# Validate host (basic) — prompt if not set
+if [ -z "${PROXY_HOST:-}" ]; then
+  if [ -t 0 ]; then
+    printf 'Enter your Mac LAN IP (PROXY_HOST): '
+    read -r PROXY_HOST
+  fi
+fi
 case "$PROXY_HOST" in
-  ''|*[[:space:]]*) err "PROXY_HOST empty/invalid: '$PROXY_HOST'"; exit 5 ;;
+  ''|*[[:space:]]*) err "PROXY_HOST is required. Set via env or run interactively."; exit 5 ;;
 esac
+info "Proxy host: $PROXY_HOST"
+
+PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"
+_LAN_PREFIX="$(echo "$PROXY_HOST" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
+if [ -n "${_LAN_PREFIX:-}" ]; then
+  NO_PROXY_VAL="${NO_PROXY_VAL:-localhost,127.0.0.1,${_LAN_PREFIX}.0/24}"
+else
+  NO_PROXY_VAL="${NO_PROXY_VAL:-localhost,127.0.0.1}"
+fi
 
 # Resolve repo dir (supports running from repo root or scripts/proxy/)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
