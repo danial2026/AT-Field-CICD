@@ -84,8 +84,12 @@ needed.
 
 The Docker **daemon** itself (used by `docker pull` and `docker build` to fetch
 base images like `node:20-alpine`, and by `apk add`/`npm ci` inside the build)
-needs a systemd drop-in to use the proxy. Sudo requires your password, which I
-can't enter. This is the one remaining manual step (see §5).
+needs two things: a systemd drop-in for the HTTP proxy, **and** DNS servers
+configured in `/etc/docker/daemon.json`. The proxy handles HTTPS but DNS
+resolution (UDP port 53) is also filtered by some ISPs, so containers need
+explicit DNS servers to resolve hostnames before the proxy can tunnel the
+connection. Sudo requires your password, which I can't enter. This is the one
+remaining manual step (see §5).
 
 ---
 
@@ -96,7 +100,7 @@ There are three scripts in `scripts/proxy/` (all `v1.0.0`):
 | Script | Runs on | What it does |
 |---|---|---|
 | `mac-setup-tinyproxy.sh` | **Mac** | Installs + configures + starts tinyproxy, verifies end-to-end. |
-| `server-setup-proxy.sh` | **Server** | Configures git, shell env, docker-compose override, and Docker daemon. |
+| `server-setup-proxy.sh` | **Server** | Configures git, shell env, docker-compose override, Docker daemon proxy + DNS. |
 | `server-remove-proxy.sh` | **Server** | Removes everything the setup script did. |
 
 All three are production-hardened: `set -euo pipefail`, OS guards (Mac vs
@@ -156,6 +160,21 @@ Environment="HTTP_PROXY=http://<your-mac-lan-ip>:8888"
 Environment="HTTPS_PROXY=http://<your-mac-lan-ip>:8888"
 Environment="NO_PROXY=localhost,127.0.0.1,<your-lan-subnet>"
 EOF
+
+# Also configure DNS servers so build containers can resolve hostnames
+# (DNS is also filtered by some ISPs; the proxy only handles HTTP/HTTPS)
+sudo python3 -c "
+import json
+cfg = {}
+try:
+    with open('/etc/docker/daemon.json') as f:
+        cfg = json.load(f)
+except: pass
+cfg['dns'] = ['8.8.8.8', '1.1.1.1']  # or use Shecan: 178.22.122.100, 185.51.200.2
+with open('/etc/docker/daemon.json', 'w') as f:
+    json.dump(cfg, f, indent=2)
+"
+
 sudo systemctl daemon-reload && sudo systemctl restart docker
 ```
 
@@ -172,7 +191,7 @@ This removes:
 - `git config --global` proxy entries,
 - the `no_proxy` block from `~/.zshrc` and `~/.bashrc`,
 - `docker-compose.override.yml`,
-- the Docker daemon drop-in (needs sudo), and restarts Docker.
+- the Docker daemon drop-in and DNS config (needs sudo), and restarts Docker.
 
 After this the server uses its direct connection again — GitHub may start
 hanging once more.
@@ -203,6 +222,11 @@ brew uninstall tinyproxy
 - **If `git clone` still hangs** after setup: confirm the proxy is reachable
   from the server with `curl -x http://<your-mac-lan-ip>:8888 https://github.com`,
   and confirm the Mac's VPN is up with `curl https://github.com` on the Mac.
+- **If `docker build` fails with DNS errors** (e.g. `apk add` can't resolve
+  `dl-cdn.alpinelinux.org`): the proxy handles HTTPS but DNS is also filtered by
+  some ISPs. Make sure Docker DNS is configured in `/etc/docker/daemon.json`.
+  Re-run `server-setup-proxy.sh` or set custom DNS servers with
+  `DOCKER_DNS=178.22.122.100,185.51.200.2` (Shecan, works in Iran).
 - **GitHub auth inside the container** uses the `CI_CLONE_AUTH_URL` / git token
   mechanism in `server.js`; that path now also flows through the proxy via the
   container env.

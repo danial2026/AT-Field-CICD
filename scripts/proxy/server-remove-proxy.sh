@@ -6,7 +6,7 @@
 #   1. git global http/https proxy
 #   2. no_proxy block from ~/.zshrc and ~/.bashrc
 #   3. docker-compose.override.yml (backed up, not deleted outright)
-#   4. Docker daemon proxy drop-in (NEEDS SUDO)
+#   4. Docker daemon proxy drop-in + DNS config (NEEDS SUDO)
 #
 # After this, the server uses its direct (TCI) connection again — which may
 # re-introduce the GitHub hang. Use this to revert or troubleshoot.
@@ -114,23 +114,45 @@ else
 fi
 
 # ---------- 4) Docker daemon drop-in (NEEDS SUDO) ---------------------------
-info "[4/4] Removing Docker daemon proxy drop-in (needs sudo)..."
+info "[4/4] Removing Docker daemon proxy drop-in + DNS (needs sudo)..."
 DAEMON_CONF="/etc/systemd/system/docker.service.d/http-proxy.conf"
+DAEMON_JSON="/etc/docker/daemon.json"
 if [ "$DRY_RUN" = "1" ]; then
-  log "  DRY   would remove $DAEMON_CONF + restart docker (if present)"
+  log "  DRY   would remove $DAEMON_CONF + DNS config from $DAEMON_JSON + restart docker"
 else
   if sudo -n true 2>/dev/null; then SUDO="sudo -n"; else SUDO="sudo"; info "    (sudo will prompt)"; fi
 
   if $SUDO test -f "$DAEMON_CONF"; then
     $SUDO rm -f "$DAEMON_CONF"
-    $SUDO systemctl daemon-reload
-    if $SUDO systemctl restart docker; then
-      info "    removed drop-in + restarted docker"
-    else
-      warn "    docker restart failed — check: journalctl -u docker -n 50"
-    fi
+    info "    removed drop-in"
   else
     info "    (no drop-in present)"
+  fi
+
+  # Remove the dns key from daemon.json
+  if $SUDO test -f "$DAEMON_JSON"; then
+    $SUDO cp -a "$DAEMON_JSON" "$DAEMON_JSON.bak.$(date +%Y%m%d%H%M%S)"
+    DNS_JSON_TMP="$(mktemp)"
+    $SUDO python3 <<PYEOF
+import json
+cfg_path = '$DAEMON_JSON'
+with open(cfg_path) as f:
+    cfg = json.load(f)
+cfg.pop('dns', None)
+with open('$DNS_JSON_TMP', 'w') as f:
+    json.dump(cfg, f, indent=2)
+PYEOF
+    $SUDO mv "$DNS_JSON_TMP" "$DAEMON_JSON"
+    info "    removed dns from $DAEMON_JSON"
+  else
+    info "    (no daemon.json present)"
+  fi
+
+  $SUDO systemctl daemon-reload
+  if $SUDO systemctl restart docker; then
+    info "    docker restarted"
+  else
+    warn "    docker restart failed — check: journalctl -u docker -n 50"
   fi
 fi
 
@@ -142,6 +164,8 @@ if [ "$DRY_RUN" = "0" ]; then
   [ -f "$COMPOSE_FILE" ] && warn "  $COMPOSE_FILE still exists" || info "  $COMPOSE_FILE gone [OK]"
   if [ "${SUDO:-}" != "" ]; then
     $SUDO test -f "$DAEMON_CONF" && warn "  $DAEMON_CONF still exists" || info "  $DAEMON_CONF gone [OK]"
+    DOCKER_DNS_CHECK="$($SUDO python3 -c "import json; d=json.load(open('/etc/docker/daemon.json')); print(','.join(d.get('dns',[])))" 2>/dev/null || echo '')"
+    [ -z "$DOCKER_DNS_CHECK" ] && info "  docker DNS removed [OK]" || warn "  docker DNS still in daemon.json: $DOCKER_DNS_CHECK"
   fi
 fi
 

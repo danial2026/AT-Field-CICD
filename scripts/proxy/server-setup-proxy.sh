@@ -11,7 +11,7 @@
 #   1. git (global http/https proxy)                 — no sudo
 #   2. shell no_proxy in ~/.zshrc and ~/.bashrc      — no sudo
 #   3. docker-compose.override.yml (container env)  — no sudo
-#   4. Docker daemon proxy drop-in (docker pull/build) — NEEDS SUDO
+#   4. Docker daemon proxy drop-in + DNS (docker pull/build) — NEEDS SUDO
 #
 # Requirements:
 #   - Run from inside the AT-Field-CICD repo (or its parent layout).
@@ -28,6 +28,7 @@
 #   bash scripts/proxy/server-setup-proxy.sh
 #
 #   PROXY_HOST=<your-mac-ip> PROXY_PORT=8888 bash scripts/proxy/server-setup-proxy.sh
+#   DOCKER_DNS=8.8.8.8,1.1.1.1 bash scripts/proxy/server-setup-proxy.sh   # override DNS
 #   DRY_RUN=1 bash scripts/proxy/server-setup-proxy.sh        # show actions only
 #   FORCE=1  bash scripts/proxy/server-setup-proxy.sh         # skip pre-flight
 #   bash scripts/proxy/server-setup-proxy.sh --help
@@ -59,6 +60,7 @@ PROXY_PORT="${PROXY_PORT:-8888}"
 DRY_RUN="${DRY_RUN:-0}"
 FORCE="${FORCE:-0}"
 TEST_GIT_REPO="${TEST_GIT_REPO:-https://github.com/octocat/Hello-World.git}"
+DOCKER_DNS="${DOCKER_DNS:-8.8.8.8,1.1.1.1}"
 
 # ---------- helpers ----------------------------------------------------------
 log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -274,6 +276,33 @@ Environment="NO_PROXY=$NO_PROXY_VAL"
 EOF
   info "    written: $DAEMON_CONF"
 
+  # Also configure Docker DNS in daemon.json so build containers can resolve
+  # hostnames (DNS is also filtered by some ISPs; proxy only handles HTTP).
+  info "    configuring Docker DNS: $DOCKER_DNS"
+  DAEMON_JSON="/etc/docker/daemon.json"
+  DNS_JSON_TMP="$(mktemp)"
+  if $SUDO test -f "$DAEMON_JSON"; then
+    $SUDO cp -a "$DAEMON_JSON" "$DAEMON_JSON.bak.$(date +%Y%m%d%H%M%S)"
+    info "    backed up existing $DAEMON_JSON"
+  fi
+  # Merge dns into daemon.json using python3 (available on Ubuntu by default)
+  $SUDO python3 <<PYEOF
+import json, os
+dns = '${DOCKER_DNS}'.split(',')
+cfg = {}
+cfg_path = '${DAEMON_JSON}'
+if os.path.exists(cfg_path):
+    try:
+        with open(cfg_path) as f: cfg = json.load(f)
+    except (json.JSONDecodeError, ValueError):
+        pass
+cfg['dns'] = dns
+with open('${DNS_JSON_TMP}', 'w') as f:
+    json.dump(cfg, f, indent=2)
+PYEOF
+  $SUDO mv "$DNS_JSON_TMP" "$DAEMON_JSON"
+  info "    written: $DAEMON_JSON"
+
   info "    reloading systemd + restarting docker..."
   $SUDO systemctl daemon-reload
   if $SUDO systemctl restart docker; then
@@ -293,6 +322,8 @@ if [ "$DRY_RUN" = "0" ]; then
   if [ "${SUDO:-}" != "" ]; then
     DOCKER_ENV="$($SUDO systemctl show docker -p Environment 2>/dev/null | tr ' ' '\n' | grep -o 'HTTPS_PROXY=[^ ]*' || echo 'set')"
     info "  docker HTTPS_PROXY = $DOCKER_ENV"
+    DOCKER_DNS_CHECK="$($SUDO python3 -c "import json; d=json.load(open('/etc/docker/daemon.json')); print(','.join(d.get('dns',[])))" 2>/dev/null || echo 'unset')"
+    info "  docker DNS = $DOCKER_DNS_CHECK"
   fi
   # Functional test: git through proxy
   info "  functional test: git ls-remote via proxy..."
