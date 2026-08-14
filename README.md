@@ -1,12 +1,35 @@
 # AT FIELD CICD
 
-![Version](https://img.shields.io/badge/version-0.0.1-blue)
+![Version](https://img.shields.io/badge/version-0.0.2-blue)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 CI/CD platform with a web dashboard. Builds, tests, and deploys with strong isolation and controlled pipelines - like an Absolute Terror Field for your projects
 
-![Dashboard](screenshots/dashboard.png)
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><b>Login Screen</b><br><img src="screenshots/login.png" width="400"></td>
+    <td align="center"><b>Dashboard View</b><br><img src="screenshots/dashboard.png" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Repositories</b><br><img src="screenshots/repos.png" width="400"></td>
+    <td align="center"><b>Script Manager</b><br><img src="screenshots/scripts.png" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Notifications</b><br><img src="screenshots/notifications.png" width="400"></td>
+    <td align="center"><b>Build Logs</b><br><img src="screenshots/logs.png" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Audit Trail</b><br><img src="screenshots/audit.png" width="400"></td>
+    <td align="center"><b>Settings Page</b><br><img src="screenshots/settings.png" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Users &amp; Roles</b><br><img src="screenshots/users.png" width="400"></td>
+    <td align="center"><b>Profile Page</b><br><img src="screenshots/profile.png" width="400"></td>
+  </tr>
+</table>
 
 ## Quick Start
 
@@ -24,16 +47,6 @@ Point a repo webhook at `http://your-host:3000/webhook/<slug>`.
 3. Matching actions run one at a time through a serial queue, each with its own log.
 
 **Actions:** `script` (run a `.sh`), `deploy` via `rsync`, or `deploy` via `ssh`.
-
-## Screenshots
-
-| Login | Dashboard |
-|-------|-----------|
-| ![Login](screenshots/login.png) | ![Dashboard](screenshots/dashboard.png) |
-
-| Scripts | Logs | Audit |
-|---------|------|-------|
-| ![Scripts](screenshots/scripts.png) | ![Logs](screenshots/logs.png) | ![Audit](screenshots/audit.png) |
 
 ## Security
 
@@ -57,3 +70,7 @@ bash test-smoke.sh                          # smoke tests
 ## License
 
 [MIT](LICENSE) - © 2026 danial
+
+## AI Assistance
+
+Parts of this project were developed with assistance from DeepSeek.

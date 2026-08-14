@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# TEMPLATE: Build & deploy - DEVELOPMENT
+# TEMPLATE: Build & deploy - STAGING
 # =============================================================================
 # Part of the AT FIELD CICD template set (type 1: plain CI/CD builds).
 #
@@ -12,36 +12,29 @@
 #   4. Deploys the result - run/restart sections are COMMENTED OUT.
 #
 # ENV VARIABLES PROVIDED BY AT FIELD CICD
-#   CI_KEYWORD        keyword that triggered this job (e.g. BUILD_DEV)
-#   CI_REPO           repo full name (e.g. owner/repo)
-#   CI_COMMIT         commit SHA the action was matched against
-#   CI_PROVIDER       github | gitea | forgejo | gitlab | generic
-#   CI_GIT_USER       git username (if configured on the repo)
-#   CI_GIT_TOKEN      git token/PAT (if configured on the repo)
-#   CI_CLONE_AUTH_URL authenticated https clone URL (private repos)
-#   CI_CLONE_URL      plain clone URL
+#   CI_KEYWORD   CI_REPO   CI_COMMIT   CI_PROVIDER
+#   CI_GIT_USER  CI_GIT_TOKEN  CI_CLONE_AUTH_URL  CI_CLONE_URL
+#
+#   See scripts/build-dev.sh header for the full list and docs.
 #
 # FILES EXPECTED
 #   change these to match your repo layout
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
-WORKDIR="$(dirname "$0")/work"
+WORKDIR="$(dirname "$0")/work-staging"
 REPO_URL="${CI_CLONE_AUTH_URL:-${CI_CLONE_URL:-}}"
-BRANCH="dev"
+BRANCH="staging"
 
-info()  { echo "[build-dev] $*"; }
-die()   { echo "[build-dev] ERROR: $*" >&2; exit 1; }
+info()  { echo "[build-staging] $*"; }
+die()   { echo "[build-staging] ERROR: $*" >&2; exit 1; }
 
 echo "==============================="
-echo " BUILD_DEV ($(date -u +%FT%TZ))"
+echo " BUILD_STAGING ($(date -u +%FT%TZ))"
 echo "==============================="
 
 # -- 1. ENVIRONMENT CHECKS --------------------------------------------------
 command -v git >/dev/null 2>&1 || die "git is required"
-for tool in go node npm; do
-  [ -x "$(command -v $tool)" ] && info "$tool: $($tool --version 2>/dev/null | head -1)" || true
-done
 info "repo: ${CI_REPO:-<unknown>}  commit: ${CI_COMMIT:-<unknown>}  branch: $BRANCH"
 [ -n "$REPO_URL" ] || die "no clone URL (set clone_url on the repo or CI_CLONE_URL)"
 
@@ -55,20 +48,19 @@ cd "$WORKDIR"
 
 # -- 3. BUILD ----------------------------------------------------------------
 # Uncomment the block that matches your stack and adjust paths/commands.
-# The other block is provided for reference.
 
-info "building (dev)..."
+info "building (staging)..."
 
 ## --- Go backend -------------------------------------------------------------
 # export CGO_ENABLED=0
 # go mod download
+# go vet ./...
 # go build -trimpath -ldflags="-s -w" -o bin/app ./cmd/server     # adjust ./cmd/server
-# go test ./... ./... >/dev/null 2>&1 || true                     # optional: dev tests
 #
 ## --- Node.js backend --------------------------------------------------------
 # npm ci 2>/dev/null || npm install
-# npm run build:dev          # project script, e.g. tsc / vite build / next build
-# npm test 2>/dev/null || true
+# npm run build:staging       # project script (envs usually come from config)
+# npm run test 2>/dev/null || true
 
 echo ""                                                        # <- remove me
 echo "BUILD STEP COMMENTED OUT - uncomment a stack block above" # <- remove me
@@ -76,19 +68,19 @@ echo "BUILD STEP COMMENTED OUT - uncomment a stack block above" # <- remove me
 # -- 4. DEPLOY ---------------------------------------------------------------
 # Uncomment one of the sections below. Pick what fits your setup.
 
-## A) Simple: copy a package to a shared location -----------------------------
-# DEPLOY_DIR="/srv/${CI_REPO//\//-}-dev"
+## A) Copy a package to a shared location --------------------------------------
+# DEPLOY_DIR="/srv/${CI_REPO//\//-}-staging"
 # mkdir -p "$DEPLOY_DIR"
-# rsync -a --delete --exclude node_modules --exclude .git ./ "$DEPLOY_DIR/"
-# info "deployed files to $DEPLOY_DIR"
-
-## B) Restart via systemd (unit file pre-created on the server) ---------------
-# systemctl --user restart myapp-dev || sudo systemctl restart myapp-dev
-
-## C) Run the process directly (dev) ------------------------------------------
-# exec ./bin/app -port 8080   # Go
-# exec npm run start:dev      # Node.js
+# rsync -a --delete --exclude "$WORKDIR/.git" "$WORKDIR/" "$DEPLOY_DIR/"
+#
+## B) Restart the service via SSH ----------------------------------------------
+# ssh -i /path/to/key deployer@staging.example.com \
+#   'sudo systemctl restart myapp-staging'
+#
+## C) Run the process directly (staging) ---------------------------------------
+# exec ./bin/app -port 8081   # Go
+# exec npm run start:staging  # Node.js
 
 echo "==============================="
-echo " BUILD_DEV DONE"
+echo " BUILD_STAGING DONE"
 echo "==============================="
