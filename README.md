@@ -9,24 +9,28 @@ CI/CD platform with a web dashboard. Builds, tests, and deploys with strong isol
 ## Screenshots
 
 | Login | Dashboard |
-|-------|-----------|
-| <img src="screenshots/login.png" alt="Login" width="100%"> | <img src="screenshots/dashboard.png" alt="Dashboard" width="100%"> |
+| --- | --- |
+| ![Login](screenshots/login.png) | ![Dashboard](screenshots/dashboard.png) |
+
 
 | Repositories | Scripts |
-|--------------|---------|
-| <img src="screenshots/repos.png" alt="Repositories" width="100%"> | <img src="screenshots/scripts.png" alt="Scripts" width="100%"> |
+| --- | --- |
+| ![Repositories](screenshots/repos.png) | ![Scripts](screenshots/scripts.png) |
+
 
 | Notifications | Logs |
-|---------------|------|
-| <img src="screenshots/notifications.png" alt="Notifications" width="100%"> | <img src="screenshots/logs.png" alt="Logs" width="100%"> |
+| --- | --- |
+| ![Notifications](screenshots/notifications.png) | ![Logs](screenshots/logs.png) |
+
 
 | Audit | Settings |
-|-------|----------|
-| <img src="screenshots/audit.png" alt="Audit" width="100%"> | <img src="screenshots/settings.png" alt="Settings" width="100%"> |
+| --- | --- |
+| ![Audit](screenshots/audit.png) | ![Settings](screenshots/settings.png) |
+
 
 | Users | Profile |
-|-------|---------|
-| <img src="screenshots/users.png" alt="Users" width="100%"> | <img src="screenshots/profile.png" alt="Profile" width="100%"> |
+| --- | --- |
+| ![Users](screenshots/users.png) | ![Profile](screenshots/profile.png) |
 
 ## Quick Start
 
