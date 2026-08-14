@@ -8,27 +8,27 @@ CI/CD platform with a web dashboard. Builds, tests, and deploys with strong isol
 
 ## Screenshots
 
-| Login | Dashboard |
+| Login Screen | Dashboard View |
 | --- | --- |
 | ![Login](screenshots/login.png) | ![Dashboard](screenshots/dashboard.png) |
 
 
-| Repositories | Scripts |
+| Repositories | Script Manager |
 | --- | --- |
 | ![Repositories](screenshots/repos.png) | ![Scripts](screenshots/scripts.png) |
 
 
-| Notifications | Logs |
+| Notifications | Build Logs |
 | --- | --- |
 | ![Notifications](screenshots/notifications.png) | ![Logs](screenshots/logs.png) |
 
 
-| Audit | Settings |
+| Audit Trail | Settings Page |
 | --- | --- |
 | ![Audit](screenshots/audit.png) | ![Settings](screenshots/settings.png) |
 
 
-| Users | Profile |
+| Users & Roles | Profile Page |
 | --- | --- |
 | ![Users](screenshots/users.png) | ![Profile](screenshots/profile.png) |
 
