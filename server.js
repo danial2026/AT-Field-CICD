@@ -5,11 +5,12 @@ require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
-const yaml = require('js-yaml');
 const db = require('./lib/db');
 const poller = require('./lib/poller');
+const notify = require('./lib/notify');
 
 console.log(`
    █████████   ███████████    ███████████  ███           ████      █████      █████████  █████
@@ -25,17 +26,82 @@ console.log(`
 // CONFIG
 
 const PORT = process.env.PORT || 3000;
-const POLL_INTERVAL_MS = Math.max(
-  15_000,
-  parseInt(process.env.POLL_INTERVAL_MS || '60000', 10) || 60_000
-);
+// Runtime settings (editable by staff in Global Settings); env only sets
+// the boot default. POLL_INTERVAL_MS stays mutable via schedulePoll().
+const SETTINGS_DEFAULTS = {
+  app_url: '',
+  poll_interval_ms: Math.max(15_000, parseInt(process.env.POLL_INTERVAL_MS || '60000', 10) || 60_000),
+  max_active_jobs: 1,
+  script_timeout_ms: 30 * 60 * 1000,
+  rsync_timeout_ms: 60 * 60 * 1000,
+  ssh_timeout_ms: 30 * 60 * 1000,
+  log_retention_days: 0,
+  maintenance_mode: false,
+};
+const SETTING_RULES = {
+  app_url: 'url',
+  poll_interval_ms: { int: true, min: 15_000, max: 3_600_000 },
+  max_active_jobs: { int: true, min: 1, max: 10 },
+  script_timeout_ms: { int: true, min: 60_000, max: 86_400_000 },
+  rsync_timeout_ms: { int: true, min: 60_000, max: 86_400_000 },
+  ssh_timeout_ms: { int: true, min: 60_000, max: 86_400_000 },
+  log_retention_days: { int: true, min: 0, max: 3650 },
+  maintenance_mode: 'bool',
+};
+
+function getSettings() {
+  return { ...SETTINGS_DEFAULTS, ...db.getSettings() };
+}
+
+function getSetting(key) {
+  const v = db.getSetting(key);
+  return v === undefined ? SETTINGS_DEFAULTS[key] : v;
+}
+
+function maintenanceMode() {
+  return getSetting('maintenance_mode') === true;
+}
+
+function sanitizeSettings(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Invalid settings payload' };
+  }
+  const clean = {};
+  for (const [key, rule] of Object.entries(SETTING_RULES)) {
+    if (!(key in body)) continue;
+    const raw = body[key];
+    if (rule === 'bool') {
+      if (typeof raw !== 'boolean') return { error: `Invalid value for ${key}` };
+      clean[key] = raw;
+    } else if (rule === 'url') {
+      if (typeof raw !== 'string') return { error: `Invalid value for ${key}` };
+      const v = raw.trim().replace(/\/+$/, '');
+      if (v) {
+        try {
+          const u = new URL(v);
+          if (!['http:', 'https:'].includes(u.protocol)) throw new Error();
+        } catch {
+          return { error: `${key} must be a valid http(s) URL` };
+        }
+      }
+      clean[key] = v;
+    } else {
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < rule.min || n > rule.max) {
+        return { error: `${key} must be an integer between ${rule.min} and ${rule.max}` };
+      }
+      clean[key] = n;
+    }
+  }
+  return { clean };
+}
+
 const COOKIE_NAME = 'ci_session';
 // Only set Secure cookies when explicitly enabled (requires HTTPS)
 const COOKIE_SECURE = process.env.COOKIE_SECURE === '1';
 const ADMIN_USER = process.env.ADMIN_USER || process.env.DASHBOARD_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || process.env.DASHBOARD_PASSWORD || '';
 
-const CONFIG_FILE = path.join(__dirname, 'config.yaml');
 const LOGS_DIR = path.join(__dirname, 'logs');
 const SCRIPTS_DIR = path.join(__dirname, 'scripts');
 
@@ -65,23 +131,9 @@ if (bootUser) {
   }
 }
 
-try {
-  if (fs.existsSync(CONFIG_FILE)) {
-    const cfg = yaml.load(fs.readFileSync(CONFIG_FILE, 'utf8')) || {};
-    const migrated = db.migrateFromYaml(cfg.actions);
-    if (migrated) {
-      console.log(`[DB] Migrated ${Object.keys(cfg.actions || {}).length} actions from config.yaml to repo #${migrated.id} (${migrated.slug})`);
-    }
-  }
-} catch (err) {
-  console.error('[DB] YAML migrate skipped:', err.message);
-}
-
 // STATE
 
 let jobQueue = [];
-let currentJob = null;
-let isProcessing = false;
 const failedAuthAttempts = new Map();
 const pollInFlight = new Set();
 let lastPollCycleAt = null;
@@ -181,6 +233,105 @@ function safeEqual(a, b) {
 
 function hmacHex(secret, body) {
   return crypto.createHmac('sha256', secret).update(body).digest('hex');
+}
+
+// NOTIFICATIONS
+
+const NOTIFY_EVENT_LABELS = {
+  job_start: 'Job started',
+  job_success: 'Job succeeded',
+  job_failure: 'Job failed',
+  job_timeout: 'Job timed out',
+  poll_error: 'Poll error',
+};
+
+/** Send a message to every enabled notification target of a user that subscribes to `event`. */
+async function notifyUser(userId, event, payload) {
+  const targets = db.listNotifications(userId).filter(t =>
+    t.enabled && Array.isArray(t.events) && t.events.includes(event)
+  );
+  if (!targets.length) return { sent: 0 };
+
+  const message = [
+    payload.message,
+    payload.repo ? `Repo: ${payload.repo}` : null,
+    payload.keyword ? `Keyword: ${payload.keyword}` : null,
+    payload.duration ? `Duration: ${payload.duration}` : null,
+  ].filter(Boolean).join('\n');
+
+  let sent = 0;
+  const results = await Promise.allSettled(targets.map(async target => {
+    await notify.send(target, {
+      title: `${NOTIFY_EVENT_LABELS[event] || event} - ${payload.title || 'AT FIELD CICD'}`,
+      message,
+      ok: event !== 'job_failure' && event !== 'job_timeout' && event !== 'poll_error',
+      event,
+      ...payload,
+    });
+    sent += 1;
+  }));
+
+  const failed = results.filter(r => r.status === 'rejected');
+  if (failed.length) {
+    console.warn('[NOTIFY]', event, 'failed targets:', failed.map(r => r.reason?.message || 'error').join('; '));
+  }
+  return { sent, failed: failed.length };
+}
+
+function notifyJobEvent(userId, event, job, extra = {}) {
+  if (!userId) return;
+  const status = event === 'job_success' ? 'success'
+    : event === 'job_failure' ? 'fail'
+    : event === 'job_timeout' ? 'timeout' : 'start';
+  const repo = job.repo_id ? db.getRepoById(job.repo_id) : null;
+  notifyUser(userId, event, {
+    title: `${job.name} ${event.replace('job_', '')}`,
+    repo: job.repo,
+    repo_slug: repo ? repo.slug : null,
+    keyword: job.name,
+    type: job.type || null,
+    commit: job.commit || null,
+    trigger: job.trigger || null,
+    status,
+    ...extra,
+  }).catch(err => console.warn('[NOTIFY]', event, err.message));
+}
+
+/** Broadcast a job event to every user's subscribed notification targets. */
+function notifyAllUsers(event, job, extra = {}) {
+  for (const u of db.listUsers()) {
+    notifyJobEvent(u.id, event, job, extra);
+  }
+}
+
+function notifyPollError(repo, error) {
+  for (const u of db.listUsers()) {
+    notifyUser(u.id, 'poll_error', {
+      title: `Poll error - ${repo.full_name}`,
+      message: `Commit polling failed for ${repo.full_name}: ${error}`,
+      repo: repo.full_name,
+      ok: false,
+      event: 'poll_error',
+    }).catch(err => console.warn('[NOTIFY] poll_error', err.message));
+  }
+}
+
+// JOB RUN TRACKING
+
+function runDurationMs(runId, startedAt) {
+  return Date.now() - new Date(startedAt).getTime();
+}
+
+function trackRunStart(job) {
+  return db.recordJobStart({
+    jobId: job.id,
+    repoId: job.repo_id,
+    repoName: job.repo,
+    keyword: job.name,
+    type: job.type,
+    trigger: job.trigger,
+    logFile: job.logPath ? path.basename(job.logPath) : null,
+  });
 }
 
 // WEBHOOK SIGNATURES
@@ -392,8 +543,13 @@ function deleteScript(name) {
 // JOB QUEUE + KEYWORD MATCH
 
 function enqueue(job) {
+  if (maintenanceMode()) {
+    console.warn('[QUEUE] Rejected job during maintenance mode:', job.name);
+    return false;
+  }
   jobQueue.push(job);
   processQueue();
+  return true;
 }
 
 /** Match commits against enabled actions and enqueue jobs. Returns matched jobs. */
@@ -540,6 +696,7 @@ async function pollRepo(repo, { force = false } = {}) {
     };
   } catch (err) {
     console.error('[POLL]', repo.full_name, err.message);
+    notifyPollError(repo, err.message);
     db.setRepoPollCursor(repo.id, {
       last_commit_sha: repo.last_commit_sha,
       last_polled_at: new Date().toISOString(),
@@ -551,6 +708,11 @@ async function pollRepo(repo, { force = false } = {}) {
 }
 
 async function pollAllRepos() {
+  if (maintenanceMode()) {
+    lastPollCycleAt = new Date().toISOString();
+    lastPollCycleSummary = { checked: 0, queued: 0, skipped: true, reason: 'maintenance_mode' };
+    return;
+  }
   const repos = db.listPollRepos();
   const results = [];
   for (const repo of repos) {
@@ -567,46 +729,78 @@ async function pollAllRepos() {
   return results;
 }
 
+let pollTimer = null;
 function startPollLoop() {
   const run = () => {
     pollAllRepos().catch(err => console.error('[POLL] cycle failed:', err.message));
   };
   // Catch up shortly after boot (missed pushes while offline)
   setTimeout(run, 5_000).unref();
-  setInterval(run, POLL_INTERVAL_MS).unref();
-  console.log(`[POLL] interval ${POLL_INTERVAL_MS}ms (set POLL_INTERVAL_MS to change)`);
+  schedulePoll();
+  console.log(`[POLL] interval ${getSetting('poll_interval_ms')}ms`);
 }
 
-function processQueue() {
-  if (isProcessing || !jobQueue.length) return;
-  isProcessing = true;
-  currentJob = jobQueue.shift();
+// Recreate the interval so a Global Settings change applies without restart
+function schedulePoll() {
+  if (pollTimer) clearInterval(pollTimer);
+  const run = () => {
+    if (maintenanceMode()) return;
+    pollAllRepos().catch(err => console.error('[POLL] cycle failed:', err.message));
+  };
+  pollTimer = setInterval(run, getSetting('poll_interval_ms')).unref();
+}
 
-  try {
-    runJob(currentJob, (err) => {
-      isProcessing = false;
-      currentJob = null;
-      if (err) console.error('[QUEUE] Job failed:', err.message);
+const activeJobs = [];
+function processQueue() {
+  const maxJobs = getSetting('max_active_jobs');
+  while (activeJobs.length < maxJobs && jobQueue.length) {
+    if (maintenanceMode()) return; // drain in place; no new starts
+    const job = jobQueue.shift();
+    activeJobs.push(job);
+    try {
+      runJob(job, (err) => {
+        const i = activeJobs.indexOf(job);
+        if (i >= 0) activeJobs.splice(i, 1);
+        if (err) console.error('[QUEUE] Job failed:', err.message);
+        processQueue();
+      });
+    } catch (err) {
+      const i = activeJobs.indexOf(job);
+      if (i >= 0) activeJobs.splice(i, 1);
+      console.error('[QUEUE] Sync error:', err.message);
       processQueue();
-    });
-  } catch (err) {
-    console.error('[QUEUE] Sync error:', err.message);
-    isProcessing = false;
-    currentJob = null;
-    processQueue();
+    }
   }
 }
 
 function runJob(job, callback) {
   const { type, name, logPath } = job;
+  const startedAt = Date.now();
+  const runId = trackRunStart(job);
+
   writeToLog(logPath, `[${new Date().toISOString()}] Starting job: ${name} (type: ${type})\n`);
   if (job.repo) writeToLog(logPath, `Repo: ${job.repo}\n`);
   if (job.trigger) writeToLog(logPath, `Trigger: ${job.trigger}\n`);
 
-  if (type === 'script') runScriptJob(job, logPath, callback);
-  else if (type === 'deploy') runDeployJob(job, logPath, callback);
+  notifyAllUsers('job_start', job, { duration: null });
+
+  const done = (err) => {
+    const durationMs = Date.now() - startedAt;
+    let status = 'success';
+    if (err && err.signal) status = 'timeout';
+    else if (err) status = 'fail';
+    db.recordJobFinish(runId, { status, durationMs, exitCode: err?.code ?? null });
+    notifyAllUsers(status === 'success' ? 'job_success' : status === 'timeout' ? 'job_timeout' : 'job_failure', job, {
+      duration: `${(durationMs / 1000).toFixed(1)}s`,
+    });
+    callback(err);
+  };
+
+  if (type === 'script') runScriptJob(job, logPath, done);
+  else if (type === 'deploy') runDeployJob(job, logPath, done);
   else {
     writeToLog(logPath, `[ERROR] Unknown job type: ${type}\n`);
+    db.recordJobFinish(runId, { status: 'fail', durationMs: Date.now() - startedAt, exitCode: null });
     callback(new Error('Unknown job type'));
   }
 }
@@ -680,7 +874,7 @@ function runScriptJob(job, logPath, callback) {
   const child = spawn('bash', [scriptPath], {
     cwd: __dirname,
     env: buildJobEnv(job),
-    timeout: 30 * 60 * 1000,
+    timeout: getSetting('script_timeout_ms'),
   });
 
   child.stdout.on('data', d => writeToLog(logPath, d.toString('utf8')));
@@ -689,9 +883,13 @@ function runScriptJob(job, logPath, callback) {
     writeToLog(logPath, `[ERROR] spawn: ${err.message}\n`);
     callback(err);
   });
-  child.on('close', code => {
-    writeToLog(logPath, `[${new Date().toISOString()}] Exit code: ${code}\n`);
-    callback(code === 0 ? null : new Error(`Exit code: ${code}`));
+  child.on('close', (code, signal) => {
+    writeToLog(logPath, `[${new Date().toISOString()}] Exit code: ${code}${signal ? ` (signal: ${signal})` : ''}\n`);
+    if (code === 0) return callback(null);
+    const err = new Error(`Exit code: ${code}${signal ? ` (signal: ${signal})` : ''}`);
+    err.code = code;
+    err.signal = signal;
+    callback(err);
   });
 }
 
@@ -739,16 +937,20 @@ function runRsyncDeploy(action, logPath, callback) {
   }
   args.push(sourcePath, `${user}@${host}:${destination}`);
 
-  const child = spawn('rsync', args, { timeout: 60 * 60 * 1000 });
+  const child = spawn('rsync', args, { timeout: getSetting('rsync_timeout_ms') });
   child.stdout.on('data', d => writeToLog(logPath, d.toString('utf8')));
   child.stderr.on('data', d => writeToLog(logPath, '[STDERR] ' + d.toString('utf8')));
   child.on('error', err => {
     writeToLog(logPath, `[ERROR] rsync: ${err.message}\n`);
     callback(err);
   });
-  child.on('close', code => {
-    writeToLog(logPath, `[${new Date().toISOString()}] rsync exit: ${code}\n`);
-    callback(code === 0 ? null : new Error(`rsync exit: ${code}`));
+  child.on('close', (code, signal) => {
+    writeToLog(logPath, `[${new Date().toISOString()}] rsync exit: ${code}${signal ? ` (signal: ${signal})` : ''}\n`);
+    if (code === 0) return callback(null);
+    const err = new Error(`rsync exit: ${code}${signal ? ` (signal: ${signal})` : ''}`);
+    err.code = code;
+    err.signal = signal;
+    callback(err);
   });
 }
 
@@ -772,16 +974,20 @@ function runSshDeploy(action, logPath, callback) {
   if (sshOptions) args.push(...String(sshOptions).split(/\s+/).filter(Boolean));
   args.push(`${user}@${host}`, command);
 
-  const child = spawn('ssh', args, { timeout: 30 * 60 * 1000 });
+  const child = spawn('ssh', args, { timeout: getSetting('ssh_timeout_ms') });
   child.stdout.on('data', d => writeToLog(logPath, d.toString('utf8')));
   child.stderr.on('data', d => writeToLog(logPath, '[STDERR] ' + d.toString('utf8')));
   child.on('error', err => {
     writeToLog(logPath, `[ERROR] ssh: ${err.message}\n`);
     callback(err);
   });
-  child.on('close', code => {
-    writeToLog(logPath, `[${new Date().toISOString()}] SSH exit: ${code}\n`);
-    callback(code === 0 ? null : new Error(`SSH exit: ${code}`));
+  child.on('close', (code, signal) => {
+    writeToLog(logPath, `[${new Date().toISOString()}] SSH exit: ${code}${signal ? ` (signal: ${signal})` : ''}\n`);
+    if (code === 0) return callback(null);
+    const err = new Error(`SSH exit: ${code}${signal ? ` (signal: ${signal})` : ''}`);
+    err.code = code;
+    err.signal = signal;
+    callback(err);
   });
 }
 
@@ -1006,6 +1212,164 @@ app.patch('/api/profile', (req, res) => {
   res.json({ status: 'ok', message: 'Password updated' });
 });
 
+// Notifications (per user)
+
+const NOTIFICATION_CONFIG_FIELDS = {
+  discord: ['url'],
+  slack: ['url'],
+  telegram: ['bot_token', 'chat_id'],
+  pushover: ['api_token', 'user_key'],
+  gotify: ['url', 'app_token'],
+  ntfy: ['url', 'topic'],
+  generic: ['url', 'token'],
+};
+
+function validateNotificationConfig(type, config) {
+  const required = NOTIFICATION_CONFIG_FIELDS[type];
+  if (!required) return 'Invalid notification type';
+  if (!config || typeof config !== 'object') return 'Invalid config';
+  for (const key of required) {
+    if (key === 'token' && type === 'generic') continue; // token optional for generic
+    const val = config[key];
+    if (typeof val !== 'string' || !val.trim()) return `Missing config field: ${key}`;
+    if (String(val).length > 2000) return `Config field too long: ${key}`;
+  }
+  const url = config.url || (type === 'telegram' ? '' : '');
+  if (url) {
+    try {
+      const u = new URL(url);
+      const allowed = type === 'generic'
+        ? ['http:', 'https:', 'generic:', 'generic+https:']
+        : ['http:', 'https:'];
+      if (!allowed.includes(u.protocol)) return 'url must be http(s)';
+    } catch {
+      return 'Invalid url';
+    }
+  }
+  return null;
+}
+
+function sanitizeNotificationBody(body) {
+  const { name, type, enabled, events, config } = body || {};
+  if (!name || typeof name !== 'string' || name.length > 100) {
+    return { error: 'Invalid name' };
+  }
+  if (!db.NOTIFICATION_TYPES.includes(type)) {
+    return { error: `type must be one of: ${db.NOTIFICATION_TYPES.join(', ')}` };
+  }
+  const cfgErr = validateNotificationConfig(type, config);
+  if (cfgErr) return { error: cfgErr };
+  const validEvents = db.NOTIFICATION_EVENTS;
+  const evs = Array.isArray(events)
+    ? events.filter(e => validEvents.includes(e))
+    : [];
+  return {
+    body: {
+      name: name.trim(),
+      type,
+      enabled: enabled !== false,
+      events: evs,
+      config,
+    },
+  };
+}
+
+app.get('/api/notifications', requireAuth, (req, res) => {
+  res.json({
+    targets: db.listNotifications(req.user.id),
+    events: db.NOTIFICATION_EVENTS,
+    types: db.NOTIFICATION_TYPES,
+    status_webhook: `/webhook/status/${db.getStatusToken(req.user.id)}`,
+  });
+});
+
+app.post('/api/notifications', requireAuth, (req, res) => {
+  const { error, body } = sanitizeNotificationBody(req.body);
+  if (error) return res.status(400).json({ error });
+  const target = db.createNotification({ userId: req.user.id, ...body });
+  db.audit(req.user, 'notification_create', { id: target.id, name: target.name, type: target.type }, clientIp(req));
+  res.status(201).json(target);
+});
+
+app.patch('/api/notifications/:id', requireAuth, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const existing = db.getNotification(id, req.user.id);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+
+  const fields = {};
+  const body = req.body || {};
+  if (body.name !== undefined) {
+    if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > 100) {
+      return res.status(400).json({ error: 'Invalid name' });
+    }
+    fields.name = body.name.trim();
+  }
+  if (body.type !== undefined) {
+    if (!db.NOTIFICATION_TYPES.includes(body.type)) {
+      return res.status(400).json({ error: 'Invalid type' });
+    }
+    fields.type = body.type;
+  }
+  if (body.config !== undefined) {
+    const cfgErr = validateNotificationConfig(fields.type || existing.type, body.config);
+    if (cfgErr) return res.status(400).json({ error: cfgErr });
+    // Merge so untouched secrets (blanked or censored in the UI) are preserved.
+    const meta = ['id', 'user_id', 'name', 'type', 'enabled', 'events', 'created_at', 'updated_at'];
+    const merged = {};
+    for (const [k, v] of Object.entries(existing)) {
+      if (!meta.includes(k)) merged[k] = v;
+    }
+    for (const [k, v] of Object.entries(body.config)) {
+      if (typeof v === 'string' && v.includes('••••')) continue;
+      merged[k] = v;
+    }
+    fields.config = merged;
+  }
+  if (body.events !== undefined) {
+    fields.events = Array.isArray(body.events)
+      ? body.events.filter(e => db.NOTIFICATION_EVENTS.includes(e))
+      : [];
+  }
+  if (body.enabled !== undefined) fields.enabled = !!body.enabled;
+
+  const target = db.updateNotification(id, req.user.id, fields);
+  db.audit(req.user, 'notification_update', { id, name: target.name }, clientIp(req));
+  res.json(target);
+});
+
+app.delete('/api/notifications/:id', requireAuth, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!db.deleteNotification(id, req.user.id)) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  db.audit(req.user, 'notification_delete', { id }, clientIp(req));
+  res.json({ status: 'deleted' });
+});
+
+app.post('/api/notifications/:id/test', requireAuth, (req, res) => {
+  const target = db.getNotification(parseInt(req.params.id, 10), req.user.id);
+  if (!target) return res.status(404).json({ error: 'Not found' });
+
+  notify.send(target, {
+    title: 'Test notification',
+    message: `AT FIELD CICD test from ${req.user.username}`,
+    ok: true,
+    event: 'test',
+  }).then(() => {
+    db.audit(req.user, 'notification_test', { id: target.id, type: target.type }, clientIp(req));
+    res.json({ status: 'sent' });
+  }).catch(err => {
+    db.audit(req.user, 'notification_test_fail', { id: target.id, error: err.message }, clientIp(req));
+    res.status(502).json({ error: `Delivery failed: ${err.message}` });
+  });
+});
+
+app.post('/api/notifications/status-token/rotate', requireAuth, (req, res) => {
+  const token = db.rotateStatusToken(req.user.id);
+  db.audit(req.user, 'status_token_rotate', {}, clientIp(req));
+  res.json({ status_webhook: `/webhook/status/${token}` });
+});
+
 // Webhooks
 
 function handleWebhook(req, res, forcedRepo) {
@@ -1056,6 +1420,7 @@ function handleWebhook(req, res, forcedRepo) {
   const event = detectEventType(repo.provider, req.headers, data);
   if (event && event !== 'push' && !event.includes('push')) {
     console.log('[WEBHOOK] Ignoring event:', event, 'repo:', repo.full_name);
+    db.audit(null, 'webhook_ignored', { repo: repo.full_name, event }, clientIp(req));
     return res.status(200).json({ status: 'ignored', event });
   }
 
@@ -1087,12 +1452,111 @@ function handleWebhook(req, res, forcedRepo) {
   res.status(200).json({ status: 'queued', count: matched.length, repo: repo.full_name });
 }
 
-app.post('/webhook', (req, res) => handleWebhook(req, res, null));
+function webhookMaintenanceGuard(req, res, next) {
+  if (maintenanceMode()) {
+    return res.status(503).json({ error: 'Maintenance mode: webhook processing is paused' });
+  }
+  next();
+}
 
-app.post('/webhook/:slug', (req, res) => {
+app.post('/webhook', webhookMaintenanceGuard, (req, res) => handleWebhook(req, res, null));
+
+app.post('/webhook/:slug', webhookMaintenanceGuard, (req, res) => {
   const repo = db.getRepoBySlug(req.params.slug);
   if (!repo) return res.status(404).json({ error: 'Unknown webhook endpoint' });
   handleWebhook(req, res, repo);
+});
+
+// External status reports: POST /webhook/status/<user status token>
+// Used by templates (check-status.sh) and external scripts to push status
+// updates (docker container health, service checks, ...) to the user's
+// notification targets (SMS, email, Discord, ...).
+
+const statusReportLimits = new Map();
+const STATUS_RATE_LIMIT = 20;
+const STATUS_RATE_WINDOW_MS = 60 * 1000;
+
+function allowStatusReport(token) {
+  const now = Date.now();
+  const entry = statusReportLimits.get(token) || { count: 0, windowStart: now };
+  if (now - entry.windowStart >= STATUS_RATE_WINDOW_MS) {
+    entry.count = 0;
+    entry.windowStart = now;
+  }
+  entry.count += 1;
+  statusReportLimits.set(token, entry);
+  return entry.count <= STATUS_RATE_LIMIT;
+}
+
+function sendStatusReport(user, payload) {
+  const targets = db.listNotifications(user.id).filter(t => t.enabled);
+  if (!targets.length) return Promise.resolve({ sent: 0, failed: 0 });
+  const message = [payload.message || '', payload.details || ''].filter(Boolean).join('\n');
+  const base = {
+    title: payload.title || `Status report - ${user.username}`,
+    message,
+    ok: payload.ok !== false,
+    event: 'status_report',
+  };
+  return Promise.allSettled(targets.map(t => {
+    const clean = {};
+    for (const [k, v] of Object.entries(payload)) {
+      if (v !== '' && v !== null && v !== undefined) clean[k] = v;
+    }
+    return notify.send(t, { ...base, ...clean });
+  })).then(results => ({
+    sent: results.filter(r => r.status === 'fulfilled').length,
+    failed: results.filter(r => r.status === 'rejected').length,
+  }));
+}
+
+app.post('/webhook/status/:token', (req, res) => {
+  const { token } = req.params;
+  if (!token || !/^[a-f0-9]{32,128}$/i.test(token)) {
+    return res.status(400).json({ error: 'Invalid status token' });
+  }
+  if (!allowStatusReport(token)) {
+    return res.status(429).json({ error: 'Rate limit exceeded' });
+  }
+
+  const user = db.getUserByStatusToken(token);
+  if (!user) return res.status(401).json({ error: 'Invalid status token' });
+
+  let payload;
+  try {
+    payload = JSON.parse((Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '')).toString('utf8') || '{}');
+  } catch {
+    return res.status(400).json({ error: 'Invalid JSON' });
+  }
+  if (typeof payload !== 'object' || payload === null) {
+    return res.status(400).json({ error: 'Body must be a JSON object' });
+  }
+  const title = String(payload.title || '').slice(0, 200);
+  const message = String(payload.message || '').slice(0, 4000);
+  if (!message && !title) {
+    return res.status(400).json({ error: 'message or title required' });
+  }
+
+  const report = { title, message, ok: payload.ok !== false, details: payload.details ? String(payload.details).slice(0, 4000) : null };
+  const extra = {};
+  for (const k of ['status', 'service', 'duration', 'commit', 'branch', 'url']) {
+    const v = payload[k];
+    if (v === undefined || v === null || v === '') continue;
+    extra[k] = typeof v === 'string' ? v.slice(0, 4000) : JSON.stringify(v);
+  }
+  sendStatusReport(user, { ...report, ...extra }).then(({ sent, failed }) => {
+    db.audit(null, 'status_report', {
+      username: user.username,
+      sent,
+      failed,
+      ok: report.ok,
+      title: report.title,
+    }, clientIp(req));
+    res.json({ status: 'received', sent, failed });
+  }).catch(err => {
+    console.warn('[STATUS] delivery failed:', err.message);
+    res.status(502).json({ error: 'Delivery failed' });
+  });
 });
 
 // Static + protected API
@@ -1103,17 +1567,29 @@ app.use('/api', requireAuth);
 
 app.get('/api/status', (req, res) => {
   res.json({
-    current: currentJob
-      ? { id: currentJob.id, name: currentJob.name, type: currentJob.type, repo: currentJob.repo }
+    current: activeJobs[0]
+      ? { id: activeJobs[0].id, name: activeJobs[0].name, type: activeJobs[0].type, repo: activeJobs[0].repo }
       : null,
+    active_jobs: activeJobs.map(j => ({ id: j.id, name: j.name, type: j.type, repo: j.repo })),
     queue_length: jobQueue.length,
-    is_processing: isProcessing,
+    is_processing: activeJobs.length > 0,
+    maintenance_mode: maintenanceMode(),
     user: req.user,
     poll: {
-      interval_ms: POLL_INTERVAL_MS,
+      interval_ms: getSetting('poll_interval_ms'),
       last_cycle_at: lastPollCycleAt,
       last_cycle: lastPollCycleSummary,
     },
+  });
+});
+
+// Stats (dashboard charts)
+
+app.get('/api/stats', (req, res) => {
+  const days = Math.min(parseInt(req.query.days, 10) || 14, 90);
+  res.json({
+    ...db.getStats({ days }),
+    recent: db.listRecentRuns({ limit: 10 }),
   });
 });
 
@@ -1430,6 +1906,10 @@ app.post('/api/repos/:id/actions/:keyword/run', (req, res) => {
   const keyword = req.params.keyword;
   if (!isValidKeyword(keyword)) return res.status(400).json({ error: 'Invalid keyword' });
 
+  if (maintenanceMode()) {
+    return res.status(409).json({ error: 'Maintenance mode: manual runs are paused' });
+  }
+
   const action = db.getRepoAction(repo.id, keyword);
   if (!action) return res.status(404).json({ error: 'Action not found' });
 
@@ -1486,10 +1966,51 @@ app.delete('/api/scripts/:name', requireStaff, (req, res) => {
   res.json({ status: 'deleted' });
 });
 
+// Global settings (staff only)
+
+app.get('/api/settings', requireStaff, (req, res) => {
+  res.json({ settings: getSettings() });
+});
+
+app.put('/api/settings', requireStaff, (req, res) => {
+  const { error, clean } = sanitizeSettings(req.body);
+  if (error) return res.status(400).json({ error });
+  db.setSettings(clean);
+  if ('poll_interval_ms' in clean) schedulePoll();
+  db.audit(req.user, 'settings_update', clean, clientIp(req));
+  res.json({ settings: getSettings() });
+});
+
+// Download a consistent SQLite snapshot (WAL-safe via better-sqlite3 backup)
+app.post('/api/settings/backup', requireStaff, (req, res) => {
+  const tmp = path.join(os.tmpdir(), `at-field-ci-backup-${Date.now()}.db`);
+  db.getDb().backup(tmp).then(() => {
+    res.download(tmp, `at-field-ci-backup-${new Date().toISOString().slice(0, 10)}.db`, () => {
+      fs.unlink(tmp, () => {});
+    });
+  }).catch(err => {
+    console.error('[BACKUP]', err.message);
+    res.status(500).json({ error: 'Backup failed' });
+  });
+});
+
 // Logs
 
 app.get('/api/logs', (req, res) => {
   res.json(getLogFilesList());
+});
+
+// Run details: single job run row + its log content
+
+app.get('/api/runs/:id', requireAuth, (req, res) => {
+  const run = db.getRunById(parseInt(req.params.id, 10));
+  if (!run) return res.status(404).json({ error: 'Run not found' });
+  let log = null;
+  if (run.log_file) {
+    const content = readLogFile(run.log_file);
+    if (content !== null) log = content;
+  }
+  res.json({ run, log });
 });
 
 app.get('/api/logs/:filename', (req, res) => {
@@ -1518,6 +2039,29 @@ setInterval(() => {
   try { db.purgeExpiredSessions(); } catch (e) { /* ignore */ }
 }, 60 * 60 * 1000).unref();
 
+// Log retention: delete log files older than the configured number of days
+setInterval(() => {
+  try { cleanOldLogs(); } catch (e) { /* ignore */ }
+}, 60 * 60 * 1000).unref();
+
+function cleanOldLogs() {
+  const days = parseInt(getSetting('log_retention_days'), 10) || 0;
+  if (days <= 0) return;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  let removed = 0;
+  for (const name of fs.readdirSync(LOGS_DIR)) {
+    const file = path.join(LOGS_DIR, name);
+    try {
+      const stat = fs.statSync(file);
+      if (stat.isFile() && stat.mtimeMs < cutoff) {
+        fs.unlinkSync(file);
+        removed += 1;
+      }
+    } catch { /* ignore */ }
+  }
+  if (removed) console.log(`[CLEANUP] Removed ${removed} old log file(s)`);
+}
+
 startPollLoop();
 
 app.listen(PORT, () => {
@@ -1525,5 +2069,5 @@ app.listen(PORT, () => {
   console.log(`[SERVER] DB: ${db.DB_PATH}`);
   console.log(`[SERVER] Dashboard: http://localhost:${PORT}`);
   console.log(`[SERVER] Webhook: POST /webhook or /webhook/:slug`);
-  console.log(`[SERVER] Poll: enabled repos checked every ${POLL_INTERVAL_MS}ms`);
+  console.log(`[SERVER] Poll: enabled repos checked every ${getSetting('poll_interval_ms')}ms`);
 });

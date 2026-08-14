@@ -28,6 +28,11 @@ Mutation routes use `requireStaff` (admin/devops) or `requireAdminUser` (user ma
 The bootstrap `admin` user cannot be deleted or demoted, and no user can delete/demote
 themselves.
 
+The dashboard mirrors this model in the UI: **Audit**, **Settings**, and **Users**
+tabs are hidden from `developer` accounts, and shown to both `admin` and `devops`.
+Tab visibility is presentation-only — every protected API remains server-enforced
+(user-management endpoints stay admin-only regardless of the tab being visible).
+
 ## Webhook Verification
 
 Every webhook is signature-checked against the repo's per-repo `webhook_secret` using

@@ -9,12 +9,16 @@ let appState = {
   audit: [],
   users: [],
   actions: [],
+  stats: null,
+  notifications: { targets: [], events: [], types: [], status_webhook: '' },
   currentRepo: null,
-  currentJob: null,
+  activeJobs: [],
   queueLength: 0,
+  poll: {},
+  settings: {},
+  maintenanceMode: false,
   page: 'splash',
   isStaff: false,
-  isAdminUser: false,
 };
 
 let pendingDelete = null;
@@ -134,9 +138,34 @@ async function apiCall(method, endpoint, data = null, opts = {}) {
   }
 }
 
+async function apiCallBlob(method, endpoint, data = null) {
+  setGlobalLoading(true, 'Preparing backup…');
+  const options = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+  };
+  if (data) options.body = JSON.stringify(data);
+  try {
+    const response = await fetch(endpoint, options);
+    if (!response.ok) {
+      let error = `HTTP ${response.status}`;
+      try {
+        const json = await response.json();
+        error = json.error || error;
+      } catch {}
+      throw new Error(error);
+    }
+    return await response.blob();
+  } finally {
+    setGlobalLoading(false);
+  }
+}
+
 // AUTH FLOW
 
 async function boot() {
+  document.documentElement.classList.remove('boot');
   showPage('splash');
   const minSplash = new Promise(r => setTimeout(r, 900));
 
@@ -156,7 +185,6 @@ async function boot() {
 function enterApp() {
   showPage('app');
   appState.isStaff = appState.user.role === 'admin' || appState.user.role === 'devops';
-  appState.isAdminUser = appState.user.role === 'admin';
 
   document.getElementById('current-user-label').textContent =
     `${appState.user.username} · ${capitalize(appState.user.role)}`;
@@ -164,13 +192,13 @@ function enterApp() {
   document.querySelectorAll('[data-staff="1"]').forEach(el => {
     el.classList.toggle('hidden', !appState.isStaff);
   });
-  document.querySelectorAll('[data-admin-user="1"]').forEach(el => {
-    el.classList.toggle('hidden', !appState.isAdminUser);
-  });
 
-  switchTab('repos');
+  switchTab('dashboard');
   loadRepos();
   loadScripts();
+  loadStats();
+  loadNotifications();
+  if (appState.isStaff) loadSettings();
   updateStatus();
   if (!statusTimer) statusTimer = setInterval(updateStatus, 2500);
 }
@@ -228,7 +256,8 @@ async function handleLogout() {
 
 function switchTab(tab) {
   if (tab === 'audit' && !appState.isStaff) tab = 'repos';
-  if (tab === 'users' && !appState.isAdminUser) tab = 'repos';
+  if (tab === 'settings' && !appState.isStaff) tab = 'repos';
+  if (tab === 'users' && !appState.isStaff) tab = 'repos';
 
   document.querySelectorAll('.tab-button').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
@@ -237,14 +266,97 @@ function switchTab(tab) {
     c.classList.toggle('active', c.id === `${tab}-tab`);
   });
 
-  if (tab === 'repos') {
+  if (tab === 'dashboard') loadStats();
+  else if (tab === 'repos') {
     if (appState.currentRepo) openRepoDetail(appState.currentRepo.id);
     else loadRepos().then(renderReposList);
   } else if (tab === 'scripts') loadScripts();
   else if (tab === 'logs') loadLogs();
+  else if (tab === 'notifications') loadNotifications();
   else if (tab === 'profile') loadProfile();
   else if (tab === 'audit') loadAudit();
+  else if (tab === 'settings') loadSettings();
   else if (tab === 'users') loadUsers();
+}
+
+// GLOBAL SETTINGS
+
+function baseUrl() {
+  const custom = (appState.settings && appState.settings.app_url) || '';
+  return custom.replace(/\/+$/, '') || window.location.origin;
+}
+
+async function loadSettings() {
+  try {
+    appState.settings = (await apiCall('GET', '/api/settings', null, { loadingText: 'Loading settings…' })).settings;
+    fillSettingsForm();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+function fillSettingsForm() {
+  const s = appState.settings || {};
+  document.getElementById('settings-app-url').value = s.app_url || '';
+  document.getElementById('settings-poll-interval').value = Math.round((s.poll_interval_ms || 60000) / 1000);
+  document.getElementById('settings-max-jobs').value = s.max_active_jobs || 1;
+  document.getElementById('settings-script-timeout').value = Math.round((s.script_timeout_ms || 1800000) / 60000);
+  document.getElementById('settings-rsync-timeout').value = Math.round((s.rsync_timeout_ms || 3600000) / 60000);
+  document.getElementById('settings-ssh-timeout').value = Math.round((s.ssh_timeout_ms || 1800000) / 60000);
+  document.getElementById('settings-log-retention').value = s.log_retention_days || 0;
+  document.getElementById('settings-maintenance').checked = !!s.maintenance_mode;
+  updateSettingsRuntime();
+}
+
+function settingsFromForm() {
+  return {
+    app_url: document.getElementById('settings-app-url').value.trim(),
+    poll_interval_ms: Math.round(parseFloat(document.getElementById('settings-poll-interval').value) || 0) * 1000,
+    max_active_jobs: parseInt(document.getElementById('settings-max-jobs').value, 10) || 0,
+    script_timeout_ms: Math.round(parseFloat(document.getElementById('settings-script-timeout').value) || 0) * 60000,
+    rsync_timeout_ms: Math.round(parseFloat(document.getElementById('settings-rsync-timeout').value) || 0) * 60000,
+    ssh_timeout_ms: Math.round(parseFloat(document.getElementById('settings-ssh-timeout').value) || 0) * 60000,
+    log_retention_days: parseInt(document.getElementById('settings-log-retention').value, 10) || 0,
+    maintenance_mode: document.getElementById('settings-maintenance').checked,
+  };
+}
+
+function updateSettingsRuntime() {
+  const el = document.getElementById('settings-runtime');
+  if (el) el.textContent = 'Settings apply immediately; commit-poll scheduling and job concurrency react without restarting the server.';
+}
+
+async function saveSettings() {
+  try {
+    const payload = settingsFromForm();
+    const data = await apiCall('PUT', '/api/settings', payload, { loadingText: 'Saving settings…' });
+    appState.settings = data.settings;
+    fillSettingsForm();
+    updateStatus();
+    if (appState.isStaff && payload.maintenance_mode !== undefined) {
+      document.getElementById('maintenance-banner').classList.toggle('hidden', !payload.maintenance_mode);
+    }
+    showSuccess('Settings saved');
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function downloadBackup() {
+  try {
+    const blob = await apiCallBlob('POST', '/api/settings/backup');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `at-field-ci-backup-${new Date().toISOString().slice(0, 10)}.db`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showSuccess('Backup downloaded');
+  } catch (err) {
+    showError(`Backup failed: ${err.message}`);
+  }
 }
 
 // REPOS
@@ -319,7 +431,7 @@ async function openRepoDetail(id) {
   document.getElementById('repo-detail').classList.remove('hidden');
   document.getElementById('repo-detail-title').textContent = repo.name;
 
-  const origin = window.location.origin;
+  const origin = baseUrl();
   const sha = repo.last_commit_sha
     ? (repo.last_commit_sha.length > 12 ? repo.last_commit_sha.slice(0, 12) + '…' : repo.last_commit_sha)
     : '—';
@@ -544,15 +656,47 @@ async function revealSecret(id) {
 function showSecret(secret, webhookPath) {
   document.getElementById('secret-value').textContent = secret;
   document.getElementById('secret-webhook-url').textContent =
-    webhookPath ? `Webhook URL: ${window.location.origin}${webhookPath}` : '';
+    webhookPath ? `Webhook URL: ${baseUrl()}${webhookPath}` : '';
   openModal('secret-modal');
 }
 
 // ACTIONS
 
+const ACTION_SCRIPT_TEMPLATE = '#!/bin/bash\nset -e\n' +
+  '# Template only - edit to fit your build.\n' +
+  '# clone: git clone "$CI_CLONE_AUTH_URL" workdir\n' +
+  '# environment: CI_COMMIT_SHA, CI_KEYWORD, CI_REPO_SLUG, CI_TRIGGER\n';
+let actionScriptOriginal = '';
+
 function showFormFields(type) {
   document.getElementById('script-fields').classList.toggle('hidden', type !== 'script');
+  document.getElementById('action-script-editor').classList.toggle('hidden', type !== 'script');
   document.getElementById('deploy-fields').classList.toggle('hidden', type !== 'deploy');
+  if (type === 'script') {
+    const editor = document.getElementById('action-script-content');
+    editor.readOnly = !appState.isStaff;
+    document.getElementById('action-script-editor-hint').textContent = appState.isStaff
+      ? 'Template only — edit it to fit your build. Changes are saved to the script.'
+      : 'Read-only preview — only staff can edit script content.';
+    loadActionScriptEditor(document.getElementById('action-script').value);
+  }
+}
+
+async function loadActionScriptEditor(scriptName) {
+  const editor = document.getElementById('action-script-content');
+  if (!scriptName) {
+    actionScriptOriginal = ACTION_SCRIPT_TEMPLATE;
+    editor.value = ACTION_SCRIPT_TEMPLATE;
+    return;
+  }
+  try {
+    const data = await apiCall('GET', `/api/scripts/${encodeURIComponent(scriptName)}`, null, { silent: true });
+    actionScriptOriginal = data.content;
+    editor.value = data.content;
+  } catch {
+    actionScriptOriginal = ACTION_SCRIPT_TEMPLATE;
+    editor.value = ACTION_SCRIPT_TEMPLATE;
+  }
 }
 
 function showDeployMethodFields(method) {
@@ -564,6 +708,8 @@ function resetActionForm() {
   document.getElementById('action-keyword').disabled = false;
   document.getElementById('action-form').reset();
   showFormFields('');
+  document.getElementById('action-script-content').value = '';
+  actionScriptOriginal = '';
   document.getElementById('action-modal-title').textContent = 'Add Action';
 }
 
@@ -586,6 +732,7 @@ function editAction(keyword) {
   if (action.type === 'script') {
     populateScriptSelect(action.script);
     showFormFields('script');
+    loadActionScriptEditor(action.script);
   } else {
     document.getElementById('deploy-method').value = action.method || '';
     document.getElementById('deploy-user').value = action.user || '';
@@ -635,6 +782,15 @@ async function handleActionSubmit(e) {
     const script = document.getElementById('action-script').value.trim();
     if (!script) return showError('Select a script');
     action.script = script;
+    const content = document.getElementById('action-script-content').value;
+    if (content !== actionScriptOriginal) {
+      try {
+        await apiCall('POST', `/api/scripts/${encodeURIComponent(script.replace(/\.sh$/, ''))}`, { content }, { loadingText: 'Saving script template…' });
+        actionScriptOriginal = content;
+      } catch (err) {
+        return showError(`Script save failed: ${err.message}`);
+      }
+    }
   } else {
     const method = document.getElementById('deploy-method').value;
     const user = document.getElementById('deploy-user').value.trim();
@@ -820,6 +976,7 @@ async function loadProfile() {
     appState.profile = p;
     document.getElementById('profile-username').textContent = p.username;
     document.getElementById('profile-role').textContent = p.role;
+    document.getElementById('profile-avatar-initials').textContent = (p.username || '?').charAt(0).toUpperCase();
     document.getElementById('profile-created').textContent = p.created_at
       ? new Date(p.created_at).toLocaleString()
       : '—';
@@ -860,6 +1017,417 @@ async function handleProfileSubmit(e) {
     errEl.classList.remove('hidden');
   } finally {
     btn.disabled = false;
+  }
+}
+
+// DASHBOARD / STATS
+
+function fmtDuration(ms) {
+  if (ms == null) return '—';
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function fmtNum(n) {
+  return n == null ? '0' : String(n);
+}
+
+function svgWrap(inner, w, h) {
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">${inner}</svg>`;
+}
+
+async function loadStats() {
+  const days = document.getElementById('stats-days').value;
+  try {
+    appState.stats = await apiCall('GET', `/api/stats?days=${days}`, null, { loadingText: 'Loading stats…' });
+    renderStats();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+// For ranges longer than 14 days, group per-day data into 7-day buckets so
+// bars stay readable instead of collapsing into thin slivers.
+function bucketPerDay(perDay) {
+  if (!perDay || perDay.length <= 14) return perDay;
+  const out = [];
+  const rev = [...perDay].reverse();
+  for (let i = 0; i < rev.length; i += 7) {
+    const chunk = rev.slice(i, i + 7);
+    const b = { day: chunk[chunk.length - 1].day, total: 0, success: 0, failed: 0, timeouts: 0, running: 0 };
+    for (const d of chunk) {
+      b.total += d.total;
+      b.success += d.success;
+      b.failed += d.failed;
+      b.timeouts += d.timeouts;
+      b.running += d.running;
+    }
+    out.push(b);
+  }
+  return out.reverse();
+}
+
+function renderStats() {
+  if (!appState.stats) return;
+  const { overview, by_keyword, by_type, by_trigger, recent } = appState.stats;
+  const per_day = bucketPerDay(appState.stats.per_day);
+  const successRate = overview.total
+    ? Math.round((overview.success / overview.total) * 100)
+    : 0;
+
+  document.getElementById('stats-cards').innerHTML = `
+    <div class="stat-card"><div class="stat-value">${fmtNum(overview.total)}</div><div class="stat-label">Total runs</div></div>
+    <div class="stat-card"><div class="stat-value success">${fmtNum(overview.success)}</div><div class="stat-label">Success</div></div>
+    <div class="stat-card"><div class="stat-value error">${fmtNum(overview.failed)}</div><div class="stat-label">Failed</div></div>
+    <div class="stat-card"><div class="stat-value warning">${fmtNum(overview.timeouts)}</div><div class="stat-label">Timeouts</div></div>
+    <div class="stat-card"><div class="stat-value">${fmtNum(overview.deploys)}</div><div class="stat-label">Deploys</div></div>
+    <div class="stat-card"><div class="stat-value">${fmtNum(overview.webhook_calls)}</div><div class="stat-label">Webhook calls</div></div>
+    <div class="stat-card"><div class="stat-value">${successRate}%</div><div class="stat-label">Success rate</div></div>
+    <div class="stat-card"><div class="stat-value">${fmtDuration(overview.avg_duration_ms)}</div><div class="stat-label">Avg duration</div></div>
+  `;
+
+  // Stacked bar chart: runs per day
+  const maxDay = Math.max(1, ...per_day.map(d => d.total));
+  const barW = per_day.length > 20 ? 10 : 26;
+  const gap = per_day.length > 20 ? 6 : 18;
+  const totalW = barW * per_day.length + gap * (per_day.length - 1);
+  const chartW = Math.max(totalW, 400);
+  const chartH = 200;
+  const bars = per_day.map((d, i) => {
+    const x = 30 + i * (barW + gap);
+    let y = chartH - 10;
+    const segs = [];
+    const push = (val, color, label) => {
+      if (!val) return;
+      const h = Math.max(2, (val / maxDay) * (chartH - 30));
+      y -= h;
+      segs.push(`<rect x="${x}" y="${y}" width="${barW}" height="${h}" fill="${color}"><title>${d.day}: ${label} ${val}</title></rect>`);
+    };
+    push(d.success, '#00FF88', 'success');
+    push(d.failed, '#FF3366', 'failed');
+    push(d.timeouts, '#FFCC00', 'timeouts');
+    if (!segs.length) segs.push(`<rect x="${x}" y="${chartH - 12}" width="${barW}" height="2" fill="#1A1A1A"/>`);
+    const week = appState.stats.per_day.length > 14;
+    const lbl = week ? `w/e ${d.day.slice(5)}` : d.day.slice(5);
+    const tip = week ? `week ending ${d.day}: ${d.total} runs` : `${d.day}: ${d.total} runs`;
+    return `${segs.join('')}<text x="${x + barW / 2}" y="${chartH + 6}" font-size="9" fill="#666" text-anchor="middle">${lbl}</text><title>${tip}</title>`;
+  }).join('');
+  document.getElementById('chart-runs').innerHTML =
+    svgWrap(`<line x1="30" y1="${chartH - 10}" x2="${chartW}" y2="${chartH - 10}" stroke="#1A1A1A"/>${bars}`, chartW, chartH + 20);
+
+  // Horizontal bars: by keyword
+  const maxKw = Math.max(1, ...by_keyword.map(k => k.total));
+  const kwRows = by_keyword.length
+    ? by_keyword.map(k => `
+        <div class="hbar-row">
+          <div class="hbar-label" title="${escapeHtml(k.keyword)}">${escapeHtml(k.keyword)}</div>
+          <div class="hbar-track"><div class="hbar-fill" style="width:${Math.round((k.total / maxKw) * 100)}%"></div></div>
+          <div class="hbar-values">${fmtNum(k.total)}<span class="hbar-sub">${fmtNum(k.success)} ok · ${fmtDuration(k.avg_duration_ms)}</span></div>
+        </div>`).join('')
+    : '<p class="empty-state">No runs yet</p>';
+  document.getElementById('chart-keywords').innerHTML = kwRows;
+
+  // Donut: by type, plus trigger counts
+  const totalType = by_type.reduce((n, t) => n + t.total, 0) || 1;
+  const colors = { script: '#4CC9F0', deploy: '#00FF88' };
+  let acc = 0;
+  const donutSegs = by_type.map(t => {
+    const frac = t.total / totalType;
+    const start = acc * 360;
+    acc += frac;
+    const end = acc * 360;
+    return `<path d="${donutArc(40, 40, 32, start, end)}" fill="${colors[t.type] || '#4CC9F0'}"><title>${escapeHtml(t.type)}: ${t.total}</title></path>`;
+  }).join('');
+  const triggerRows = (by_trigger || []).map(t => `
+    <div class="hbars-mini"><span>${escapeHtml(t.trigger)}</span><b>${fmtNum(t.total)}</b></div>`).join('');
+  document.getElementById('chart-types').innerHTML = `
+    ${by_type.length ? svgWrap(donutSegs, 80, 80) : '<p class="empty-state">No runs yet</p>'}
+    <div class="legend-mini">
+      ${by_type.map(t => `<span><i style="background:${colors[t.type] || '#4CC9F0'}"></i>${escapeHtml(t.type)} (${fmtNum(t.total)})</span>`).join('')}
+    </div>
+    <div class="mini-list">${triggerRows}</div>`;
+
+  // Recent runs table
+  const recentRows = recent.length
+    ? recent.map(r => `
+      <div class="recent-row clickable" data-run-id="${escapeHtml(r.id)}" title="Click for details">
+        <span class="status-dot ${escapeHtml(r.status)}"></span>
+        <span class="recent-kw">${escapeHtml(r.keyword)}</span>
+        <span class="recent-extra">${escapeHtml(r.repo_name || '')} · ${escapeHtml(r.type)} · ${escapeHtml(r.trigger || '')}</span>
+        <span class="recent-extra">${fmtDuration(r.duration_ms)}</span>
+        <span class="recent-time">${escapeHtml((r.started_at || '').slice(0, 16).replace('T', ' '))}</span>
+      </div>`).join('')
+    : '<p class="empty-state">No runs yet</p>';
+  const recentEl = document.getElementById('chart-recent');
+  recentEl.innerHTML = recentRows;
+  recentEl.querySelectorAll('[data-run-id]').forEach(row => {
+    row.addEventListener('click', () => openRunDetails(parseInt(row.dataset.runId, 10)));
+  });
+}
+
+function openRunDetails(runId) {
+  const modal = document.getElementById('run-modal');
+  document.getElementById('run-modal-title').textContent = 'Run Details';
+  document.getElementById('run-detail').innerHTML =
+    '<div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>';
+  openModal('run-modal');
+  apiCall('GET', `/api/runs/${runId}`).then(({ run, log }) => {
+    const el = document.getElementById('run-detail');
+    if (!run) {
+      el.innerHTML = '<p class="empty-state">Run not found.</p>';
+      return;
+    }
+    const statusLabel = capitalize(run.status);
+    const started = run.started_at ? run.started_at.slice(0, 16).replace('T', ' ') : '—';
+    const finished = run.finished_at ? run.finished_at.slice(0, 16).replace('T', ' ') : '—';
+    const exit = run.exit_code !== null && run.exit_code !== undefined
+      ? escapeHtml(String(run.exit_code)) : '—';
+    document.getElementById('run-modal-title').textContent = `${run.keyword} · ${statusLabel}`;
+    el.innerHTML = `
+      <div class="run-status-banner ${escapeHtml(run.status)}">
+        <span class="status-dot ${escapeHtml(run.status)}"></span>
+        <b>${statusLabel}</b>
+        ${run.duration_ms != null ? `<span class="run-duration">${fmtDuration(run.duration_ms)}</span>` : ''}
+      </div>
+      <div class="run-info-grid">
+        <div class="run-info-item"><span>Keyword</span><b>${escapeHtml(run.keyword)}</b></div>
+        <div class="run-info-item"><span>Type</span><b>${escapeHtml(run.type)}</b></div>
+        <div class="run-info-item"><span>Repo</span><b>${escapeHtml(run.repo_name || '—')}</b></div>
+        <div class="run-info-item"><span>Trigger</span><b>${escapeHtml(run.trigger || '—')}</b></div>
+        <div class="run-info-item"><span>Started</span><b>${started}</b></div>
+        <div class="run-info-item"><span>Finished</span><b>${finished}</b></div>
+        <div class="run-info-item"><span>Exit code</span><b>${exit}</b></div>
+        <div class="run-info-item"><span>Job ID</span><b class="monospace small">${escapeHtml(run.job_id)}</b></div>
+      </div>
+      <div class="run-log-head">Log${log ? '' : ' (not available)'}</div>
+      <pre class="log-viewer log-viewer-static">${escapeHtml(log || '')}</pre>`;
+  }).catch(err => {
+    const el = document.getElementById('run-detail');
+    el.innerHTML = `<p class="empty-state">Failed to load run: ${escapeHtml(err.message)}</p>`;
+  });
+}
+
+function donutArc(cx, cy, r, startDeg, endDeg) {
+  const rad = deg => (deg - 90) * Math.PI / 180;
+  const x = (deg, rr) => cx + rr * Math.cos(rad(deg));
+  const y = (deg, rr) => cy + rr * Math.sin(rad(deg));
+  const large = endDeg - startDeg > 180 ? 1 : 0;
+  return `M ${x(startDeg, r)} ${y(startDeg, r)} A ${r} ${r} 0 ${large} 1 ${x(endDeg, r)} ${y(endDeg, r)} L ${x(endDeg, r - 14)} ${y(endDeg, r - 14)} A ${r - 14} ${r - 14} 0 ${large} 0 ${x(startDeg, r - 14)} ${y(startDeg, r - 14)} Z`;
+}
+
+// NOTIFICATIONS
+
+const notifFieldMap = {
+  generic: ['url', 'token'],
+  discord: ['url'],
+  slack: ['url'],
+  telegram: ['bot-token', 'chat-id'],
+  pushover: ['api-token', 'user-key'],
+  gotify: ['url', 'api-token'],
+  ntfy: ['url', 'topic'],
+};
+
+function notifConfigFromForm() {
+  const type = document.getElementById('notification-type').value;
+  const config = {};
+  for (const f of notifFieldMap[type] || []) {
+    const v = document.getElementById(`notification-${f}`).value.trim();
+    if (v) config[f === 'api-token' ? 'api_token' : f === 'bot-token' ? 'bot_token' : f === 'user-key' ? 'user_key' : f] = v;
+  }
+  const tpl = document.getElementById('notification-message-template').value.trim();
+  if (tpl) config.message_template = tpl;
+  return config;
+}
+
+function censorValue(v) {
+  const s = String(v || '');
+  if (s.length <= 8) return '••••';
+  return `••••${s.slice(-4)}`;
+}
+
+function censorUrl(u) {
+  return String(u).replace(/([?&]@[^=]*=)([^&]*)/g, '$1••••');
+}
+
+function notifFormFromConfig(type, config = {}) {
+  const m = { api_token: 'api-token', bot_token: 'bot-token', user_key: 'user-key', token: 'token' };
+  const secretKeys = ['token', 'api_token', 'bot_token', 'user_key'];
+  for (const [key, val] of Object.entries(config)) {
+    const el = document.getElementById(`notification-${m[key] || key}`);
+    if (!el) continue;
+    if (secretKeys.includes(key)) {
+      el.value = '';
+      el.placeholder = `saved ${censorValue(val)} · leave blank to keep`;
+    } else if (key === 'url') {
+      el.value = censorUrl(val);
+    } else {
+      el.value = val;
+    }
+  }
+  const tpl = document.getElementById('notification-message-template');
+  if (tpl) tpl.value = config.message_template || '';
+}
+
+function showNotifFields(type) {
+  const fields = notifFieldMap[type] || [];
+  document.querySelectorAll('[id^="notif-field-"]').forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll('[id^="notif-field-"] input').forEach(el => { el.value = ''; el.placeholder = ''; });
+  for (const f of fields) {
+    const group = document.getElementById(`notif-field-${f}`);
+    if (group) group.classList.remove('hidden');
+  }
+  if (type === 'generic') {
+    document.getElementById('notif-url-help').textContent =
+      'SMS/email gateways (Twilio, Mailgun, Postmark, …) or any webhook. Receives JSON { title, message, ok }.';
+  } else if (type === 'ntfy') {
+    document.getElementById('notif-url-help').textContent = 'ntfy server, e.g. https://ntfy.sh (topic appended separately)';
+  } else if (type === 'gotify') {
+    document.getElementById('notif-url-help').textContent = 'Gotify server URL, e.g. https://gotify.example.com';
+  } else {
+    document.getElementById('notif-url-help').textContent = 'Incoming webhook URL';
+  }
+}
+
+function resetNotificationForm() {
+  document.getElementById('notification-form').reset();
+  document.getElementById('notification-edit-id').value = '';
+  document.getElementById('notification-modal-title').textContent = 'Add Notification Target';
+  document.getElementById('notification-enabled').checked = true;
+  document.getElementById('notification-message-template').value = '';
+  document.querySelectorAll('.notif-event').forEach(cb => {
+    cb.checked = ['job_failure', 'job_timeout', 'poll_error'].includes(cb.value);
+  });
+  showNotifFields('generic');
+}
+
+async function loadNotifications() {
+  try {
+    appState.notifications = await apiCall('GET', '/api/notifications', null, { loadingText: 'Loading notifications…' });
+    renderNotifications();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+function renderNotifications() {
+  const { targets, status_webhook } = appState.notifications;
+  document.getElementById('status-webhook-url').value = baseUrl() + status_webhook;
+
+  const container = document.getElementById('notifications-list');
+  if (!targets.length) {
+    container.innerHTML = '<p class="empty-state">No notification targets yet. Add one to get SMS, email or chat alerts for builds, deploys, timeouts and poll errors.</p>';
+    return;
+  }
+  container.innerHTML = targets.map(t => {
+    const buttons = t.enabled
+      ? `<button class="btn btn-small" data-test-notification="${t.id}">Test</button>`
+      : '';
+    return `
+      <div class="action-item">
+        <div class="item-info">
+          <div class="item-name">${escapeHtml(t.name)} ${t.enabled ? '' : '· DISABLED'}</div>
+          <div class="item-details">${escapeHtml(t.type)} · events: ${escapeHtml((t.events || []).join(', ') || 'none')}</div>
+          <span class="action-type-badge deploy">${escapeHtml(t.type)}</span>
+        </div>
+        <div class="item-actions">
+          ${buttons}
+          <button class="btn btn-small btn-primary" data-edit-notification="${t.id}">Edit</button>
+          <button class="btn btn-small btn-danger" data-del-notification="${t.id}">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  container.querySelectorAll('[data-test-notification]').forEach(btn => {
+    btn.addEventListener('click', () => testNotification(parseInt(btn.dataset.testNotification, 10)));
+  });
+  container.querySelectorAll('[data-edit-notification]').forEach(btn => {
+    btn.addEventListener('click', () => editNotification(parseInt(btn.dataset.editNotification, 10)));
+  });
+  container.querySelectorAll('[data-del-notification]').forEach(btn => {
+    btn.addEventListener('click', () => confirmDelete('notification', btn.dataset.delNotification));
+  });
+}
+
+function editNotification(id) {
+  const t = appState.notifications.targets.find(x => x.id === id);
+  if (!t) return;
+  document.getElementById('notification-edit-id').value = String(t.id);
+  document.getElementById('notification-name').value = t.name;
+  document.getElementById('notification-type').value = t.type;
+  document.getElementById('notification-enabled').checked = !!t.enabled;
+  showNotifFields(t.type);
+  notifFormFromConfig(t.type, t);
+  document.querySelectorAll('.notif-event').forEach(cb => {
+    cb.checked = (t.events || []).includes(cb.value);
+  });
+  document.getElementById('notification-modal-title').textContent = 'Edit Notification Target';
+  openModal('notification-modal');
+}
+
+async function testNotification(id) {
+  try {
+    await apiCall('POST', `/api/notifications/${id}/test`, null, { loadingText: 'Sending test…' });
+    showSuccess('Test notification sent');
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function handleNotificationSubmit(e) {
+  e.preventDefault();
+  const id = document.getElementById('notification-edit-id').value;
+  const name = document.getElementById('notification-name').value.trim();
+  const type = document.getElementById('notification-type').value;
+  if (!name) return showError('Name required');
+
+  const events = Array.from(document.querySelectorAll('.notif-event:checked')).map(cb => cb.value);
+  const config = notifConfigFromForm();
+  const requiredUrl = notifFieldMap[type].includes('url');
+  if (requiredUrl && !config.url) return showError('Webhook URL required for this type');
+  if (type === 'telegram' && (!config.bot_token || !config.chat_id)) return showError('Telegram needs bot token + chat ID');
+  if (type === 'pushover' && (!config.api_token || !config.user_key)) return showError('Pushover needs API token + user key');
+  if (type === 'gotify' && (!config.url || !config.api_token)) return showError('Gotify needs server URL + app token');
+
+  const payload = { name, type, events, config, enabled: document.getElementById('notification-enabled').checked };
+  try {
+    if (id) {
+      await apiCall('PATCH', `/api/notifications/${id}`, payload, { loadingText: 'Saving…' });
+    } else {
+      await apiCall('POST', '/api/notifications', payload, { loadingText: 'Saving…' });
+    }
+    closeAllModals();
+    resetNotificationForm();
+    loadNotifications();
+    showSuccess('Notification target saved');
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function testStatusPing() {
+  const status = appState.notifications;
+  if (!status || !status.status_webhook) return showError('Status webhook not loaded');
+  try {
+    const data = await apiCall('POST', status.status_webhook, {
+      title: 'Ping',
+      message: `Ping from dashboard at ${new Date().toISOString()}`,
+      ok: true,
+    }, { loadingText: 'Sending ping…' });
+    showSuccess(`Ping received, forwarded to ${data.sent || 0} target(s)`);
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function rotateStatusToken() {
+  try {
+    const data = await apiCall('POST', '/api/notifications/status-token/rotate', null, { loadingText: 'Rotating…' });
+    appState.notifications.status_webhook = data.status_webhook;
+    document.getElementById('status-webhook-url').value = window.location.origin + data.status_webhook;
+    showSuccess('Status token rotated');
+  } catch (err) {
+    showError(err.message);
   }
 }
 
@@ -1027,6 +1595,9 @@ async function handleConfirmDelete() {
     } else if (type === 'user') {
       await apiCall('DELETE', `/api/users/${name}`, null, { loadingText: 'Deleting…' });
       loadUsers();
+    } else if (type === 'notification') {
+      await apiCall('DELETE', `/api/notifications/${name}`, null, { loadingText: 'Deleting…' });
+      loadNotifications();
     }
     closeAllModals();
     showSuccess('Deleted');
@@ -1040,31 +1611,52 @@ async function handleConfirmDelete() {
 async function updateStatus() {
   try {
     const status = await apiCall('GET', '/api/status', null, { silent: true });
-    appState.currentJob = status.current;
+    appState.activeJobs = status.active_jobs || [];
     appState.queueLength = status.queue_length;
+    appState.poll = status.poll || {};
+    appState.maintenanceMode = !!status.maintenance_mode;
+    document.getElementById('maintenance-banner').classList.toggle('hidden', !appState.maintenanceMode);
     renderStatus();
   } catch (err) {
     console.error('Status failed:', err.message);
   }
 }
 
+function timeAgo(iso) {
+  if (!iso) return 'never';
+  const secs = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (secs < 5) return 'just now';
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
 function renderStatus() {
   const bar = document.getElementById('status-bar');
-  let text = '';
-  if (appState.currentJob) {
-    const repo = appState.currentJob.repo ? ` @ ${appState.currentJob.repo}` : '';
-    text = `Running: ${appState.currentJob.name}${repo} (${appState.currentJob.type})`;
-    bar.classList.add('running');
-    bar.classList.remove('queued');
-  } else if (appState.queueLength > 0) {
-    text = `Queued: ${appState.queueLength} job(s)`;
-    bar.classList.add('queued');
-    bar.classList.remove('running');
-  } else {
-    text = 'Ready';
-    bar.classList.remove('running', 'queued');
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  const jobs = appState.activeJobs || [];
+  const queue = appState.queueLength || 0;
+  const poll = appState.poll || {};
+
+  const parts = [];
+  if (jobs.length) {
+    parts.push(`Running: ${jobs.map(j => `${j.name}${j.repo ? ' @ ' + j.repo : ''}`).join(', ')}`);
   }
-  document.getElementById('status-info').textContent = text;
+  if (queue > 0) parts.push(`${queue} queued`);
+  if (!parts.length) parts.push('Idle');
+
+  const last = poll.last_cycle_at ? timeAgo(poll.last_cycle_at) : 'never';
+  const interval = Math.round((poll.interval_ms || 60000) / 1000);
+  parts.push(`poll every ${interval}s · last ${last}`);
+
+  text.textContent = parts.join('  ·  ');
+  dot.className = 'status-dot-sm' + (jobs.length ? ' running' : queue > 0 ? ' queued' : '');
+  bar.classList.toggle('running', jobs.length > 0);
+  bar.classList.toggle('queued', queue > 0 && !jobs.length);
 }
 
 // INIT
@@ -1097,6 +1689,12 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
+  document.getElementById('settings-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveSettings();
+  });
+  document.getElementById('settings-backup-btn').addEventListener('click', downloadBackup);
+
   document.querySelectorAll('.close-btn, [data-modal]').forEach(btn => {
     btn.addEventListener('click', () => {
       const modalId = btn.dataset.modal;
@@ -1107,6 +1705,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (modalId === 'script-modal') resetScriptForm();
       if (modalId === 'repo-modal') resetRepoForm();
       if (modalId === 'user-modal') resetUserForm();
+      if (modalId === 'notification-modal') resetNotificationForm();
     });
   });
 
@@ -1118,6 +1717,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (modal.id === 'script-modal') resetScriptForm();
         if (modal.id === 'repo-modal') resetRepoForm();
         if (modal.id === 'user-modal') resetUserForm();
+        if (modal.id === 'notification-modal') resetNotificationForm();
       }
     });
   });
@@ -1138,6 +1738,9 @@ document.addEventListener('DOMContentLoaded', () => {
     showFormFields(e.target.value);
     if (e.target.value === 'script') populateScriptSelect();
   });
+  document.getElementById('action-script').addEventListener('change', (e) => {
+    loadActionScriptEditor(e.target.value);
+  });
   document.getElementById('deploy-method').addEventListener('change', (e) => {
     showDeployMethodFields(e.target.value);
   });
@@ -1157,6 +1760,29 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('user-form').addEventListener('submit', handleUserSubmit);
   document.getElementById('confirm-yes').addEventListener('click', handleConfirmDelete);
+
+  document.getElementById('stats-days').addEventListener('change', loadStats);
+
+  document.getElementById('add-notification-btn').addEventListener('click', () => {
+    resetNotificationForm();
+    openModal('notification-modal');
+  });
+  document.getElementById('notification-type').addEventListener('change', (e) => {
+    showNotifFields(e.target.value);
+  });
+  document.getElementById('notification-form').addEventListener('submit', handleNotificationSubmit);
+  document.getElementById('copy-status-url').addEventListener('click', () => {
+    const input = document.getElementById('status-webhook-url');
+    input.select();
+    navigator.clipboard?.writeText(input.value).catch(() => {});
+    showSuccess('Copied');
+  });
+  document.getElementById('test-status-ping').addEventListener('click', testStatusPing);
+  document.getElementById('rotate-status-token').addEventListener('click', () => {
+    if (window.confirm('Rotate the status webhook token? Old scripts using the current URL will stop working.')) {
+      rotateStatusToken();
+    }
+  });
 
   boot();
 });

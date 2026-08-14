@@ -2,8 +2,9 @@
 """
 Regenerate the README screenshots for AT FIELD CICD.
 
-Grabs one shot per dashboard tab: login, repos (dashboard), scripts, logs,
-and audit. Output goes to screenshots/.
+Captures the login page plus all nine dashboard tabs in tab order:
+dashboard, repos, scripts, notifications, logs, audit, settings, users,
+profile. Output goes to screenshots/.
 
 Setup (one time):
   pip install playwright
@@ -19,12 +20,18 @@ Env overrides:
   BASE_URL       default http://localhost:3000
   ADMIN_USER     default admin
   ADMIN_PASS     default admin
+  VIEWPORT_W     1280
+  VIEWPORT_H     800
+  SCALE_FACTOR   2 (device scale / retina; 2 → sharp 2x images)
   CHROME_PATH    path to a Chrome/Chromium binary, used when Playwright's
                  bundled browser isn't available (e.g. offline machines)
 
+Tip: widen the viewport (VIEWPORT_W=1920 VIEWPORT_H=1080) to "zoom out" the
+tabs - more content fits per shot. SCALE_FACTOR only affects image sharpness.
+
 Example:
   BASE_URL=http://localhost:3000 ADMIN_USER=admin ADMIN_PASS=secret \\
-    python scripts/screenshot-dashboard.py
+    VIEWPORT_W=1680 VIEWPORT_H=1050 python scripts/screenshot-dashboard.py
 """
 import os
 import sys
@@ -34,6 +41,9 @@ BASE = os.environ.get("BASE_URL", "http://localhost:3000")
 OUT = "screenshots"
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin")
+VIEWPORT_W = int(os.environ.get("VIEWPORT_W", "1680"))
+VIEWPORT_H = int(os.environ.get("VIEWPORT_H", "1050"))
+SCALE_FACTOR = float(os.environ.get("SCALE_FACTOR", "2"))
 CHROME_PATH = os.environ.get("CHROME_PATH") or None
 
 
@@ -46,7 +56,7 @@ def shoot(page, name):
 def click_tab(page, tab):
     """Switch to a dashboard tab and wait for it to render."""
     page.click(f'button.tab-button[data-tab="{tab}"]')
-    page.wait_for_selector(f"#{tab}-tab:not(.hidden)", timeout=5000)
+    page.wait_for_selector(f"#{tab}-tab.active", timeout=5000)
     page.wait_for_timeout(700)
 
 
@@ -56,8 +66,8 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, executable_path=CHROME_PATH)
         ctx = browser.new_context(
-            viewport={"width": 1280, "height": 800},
-            device_scale_factor=2,
+            viewport={"width": VIEWPORT_W, "height": VIEWPORT_H},
+            device_scale_factor=SCALE_FACTOR,
         )
         page = ctx.new_page()
 
@@ -72,14 +82,14 @@ def main():
         page.fill("#login-username", ADMIN_USER)
         page.fill("#login-password", ADMIN_PASS)
         page.click("#login-submit")
-        page.wait_for_selector("#repos-tab:not(.hidden)", timeout=8000)
+        page.wait_for_selector("#dashboard-tab.active", timeout=8000)
         page.wait_for_timeout(900)
 
-        # Dashboard (repos tab is the default landing)
+        # Dashboard (landing tab)
         shoot(page, "dashboard")
 
-        # Scripts / Logs / Audit
-        for tab in ("scripts", "logs", "audit"):
+        # All remaining tabs in navigation order
+        for tab in ("repos", "scripts", "notifications", "logs", "audit", "settings", "users", "profile"):
             try:
                 click_tab(page, tab)
                 shoot(page, tab)

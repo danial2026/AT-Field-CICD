@@ -1,9 +1,49 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="boot">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AT FIELD CICD</title>
+    <style>
+        /* Critical boot styles: solid black screen from first paint, everything
+           except the splash masked until app.js removes the `boot` class */
+        html.boot,
+        html.boot body { background: #000; }
+        html.boot body > *:not(#splash) { display: none !important; }
+        html.boot #splash {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        html.boot .splash-inner { text-align: center; }
+        html.boot .splash-title {
+            font-family: system-ui, sans-serif;
+            font-weight: 900;
+            font-size: 14px;
+            letter-spacing: 3px;
+            color: #fff;
+            margin-bottom: 24px;
+        }
+        html.boot .splash-loader { display: flex; gap: 8px; justify-content: center; }
+        html.boot .splash-loader span {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #fff;
+            opacity: 0.3;
+            animation: bootPulse 1s ease-in-out infinite;
+        }
+        html.boot .splash-loader span:nth-child(2) { animation-delay: 0.2s; }
+        html.boot .splash-loader span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes bootPulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+    </style>
     <link rel="icon" href="at-field-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="style.css">
 </head>
@@ -89,23 +129,61 @@
                 </div>
             </div>
             <div id="status-bar" class="status-bar">
-                <div id="status-info">Ready</div>
+                <div id="maintenance-banner" class="maintenance-banner hidden">Maintenance mode is ON — webhooks, polling and manual runs are paused. Turn it off in Settings.</div>
+                <div id="status-info" class="status-info">
+                    <span id="status-dot" class="status-dot-sm"></span>
+                    <span id="status-text">Idle</span>
+                </div>
             </div>
         </header>
 
         <nav class="tabs">
-            <button class="tab-button active" data-tab="repos">Repos</button>
+            <button class="tab-button active" data-tab="dashboard">Dashboard</button>
+            <button class="tab-button" data-tab="repos">Repositories</button>
             <button class="tab-button" data-tab="scripts">Scripts</button>
+            <button class="tab-button" data-tab="notifications">Notifications</button>
             <button class="tab-button" data-tab="logs">Logs</button>
-            <button class="tab-button" data-tab="profile">Profile</button>
             <button class="tab-button" data-tab="audit" data-staff="1">Audit</button>
-            <button class="tab-button" data-tab="users" data-admin-user="1">Users</button>
+            <button class="tab-button" data-tab="settings" data-staff="1">Settings</button>
+            <button class="tab-button" data-tab="users" data-staff="1">Users</button>
+            <button class="tab-button" data-tab="profile">Profile</button>
         </nav>
+
+        <!-- DASHBOARD -->
+        <section id="dashboard-tab" class="tab-content active">
+            <div class="tab-header">
+                <select id="stats-days" class="select-inline">
+                    <option value="1" selected>Last 24 hours</option>
+                    <option value="7">Last 7 days</option>
+                    <option value="14">Last 14 days</option>
+                    <option value="30">Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                </select>
+            </div>
+            <div id="stats-cards" class="stats-grid"></div>
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>Runs per day</h3>
+                    <div id="chart-runs" class="chart-box"></div>
+                </div>
+                <div class="chart-card">
+                    <h3>Runs by keyword</h3>
+                    <div id="chart-keywords" class="chart-box"></div>
+                </div>
+                <div class="chart-card">
+                    <h3>By type / trigger</h3>
+                    <div id="chart-types" class="chart-box"></div>
+                </div>
+                <div class="chart-card">
+                    <h3>Recent runs</h3>
+                    <div id="chart-recent" class="chart-box"></div>
+                </div>
+            </div>
+        </section>
 
         <!-- REPOS -->
         <section id="repos-tab" class="tab-content active">
             <div class="tab-header">
-                <h2>Repositories</h2>
                 <button id="add-repo-btn" class="btn btn-primary" data-staff="1">+ Add Repo</button>
             </div>
             <div id="repos-list" class="actions-list">
@@ -127,7 +205,6 @@
         <!-- SCRIPTS -->
         <section id="scripts-tab" class="tab-content">
             <div class="tab-header">
-                <h2>Scripts</h2>
                 <button id="create-script-btn" class="btn btn-primary" data-staff="1">+ Create Script</button>
             </div>
             <div id="scripts-list" class="scripts-list">
@@ -138,7 +215,6 @@
         <!-- LOGS -->
         <section id="logs-tab" class="tab-content">
             <div class="tab-header">
-                <h2>Execution Logs</h2>
                 <button id="refresh-logs-btn" class="btn">Refresh</button>
             </div>
             <div id="logs-list" class="logs-list">
@@ -146,23 +222,48 @@
             </div>
         </section>
 
+        <!-- NOTIFICATIONS -->
+        <section id="notifications-tab" class="tab-content">
+            <div class="tab-header">
+                <button id="add-notification-btn" class="btn btn-primary">+ Add Target</button>
+            </div>
+
+            <div class="notify-status-box">
+                <div class="item-name">Status Webhook URL</div>
+                <div class="item-details">
+                    Send status updates from your servers or the status check script templates:
+                    any <span class="monospace">POST</span> with JSON
+                    <span class="monospace">{"message": "...", "ok": true}</span> forwards to your targets below.
+                </div>
+                <div class="copy-row">
+                    <input type="text" id="status-webhook-url" class="monospace copy-input" readonly>
+                    <button type="button" class="btn btn-small" id="copy-status-url">Copy</button>
+                    <button type="button" class="btn btn-small" id="test-status-ping">Test Ping</button>
+                    <button type="button" class="btn btn-small" id="rotate-status-token">Rotate Token</button>
+                </div>
+            </div>
+
+            <div id="notifications-list" class="actions-list">
+                <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
+            </div>
+        </section>
+
         <!-- PROFILE -->
         <section id="profile-tab" class="tab-content">
-            <div class="tab-header">
-                <h2>Profile</h2>
-            </div>
             <div class="profile-card">
-                <div class="profile-row">
-                    <span class="meta-k">Username</span>
-                    <span class="meta-v monospace" id="profile-username">—</span>
+                <div class="profile-avatar">
+                    <div class="profile-avatar-circle" id="profile-avatar-initials">—</div>
+                    <div>
+                        <div class="profile-name" id="profile-username">—</div>
+                        <span class="profile-role-badge" id="profile-role">—</span>
+                    </div>
                 </div>
-                <div class="profile-row">
-                    <span class="meta-k">Role</span>
-                    <span class="meta-v" id="profile-role">—</span>
-                </div>
-                <div class="profile-row">
-                    <span class="meta-k">Member since</span>
-                    <span class="meta-v" id="profile-created">—</span>
+
+                <div class="profile-meta">
+                    <div class="profile-row">
+                        <span class="meta-k">Member since</span>
+                        <span class="meta-v" id="profile-created">—</span>
+                    </div>
                 </div>
 
                 <h3 class="profile-section-title">Change Password</h3>
@@ -190,7 +291,6 @@
         <!-- AUDIT -->
         <section id="audit-tab" class="tab-content">
             <div class="tab-header">
-                <h2>Audit Log</h2>
                 <button id="refresh-audit-btn" class="btn">Refresh</button>
             </div>
             <div id="audit-list" class="logs-list">
@@ -198,10 +298,72 @@
             </div>
         </section>
 
+        <!-- GLOBAL SETTINGS -->
+        <section id="settings-tab" class="tab-content">
+            <div class="tab-header">
+                <span class="help-text">DevOps-only · changes apply immediately, no restart needed</span>
+            </div>
+            <form id="settings-form" class="settings-form">
+                <div class="settings-card">
+                    <h3>General</h3>
+                    <div class="form-group">
+                        <label for="settings-app-url">App URL (base URL for webhooks)</label>
+                        <input type="url" id="settings-app-url" placeholder="https://ci.example.com" autocomplete="off">
+                        <span class="help-text">Public base URL of this instance. Used to build full webhook URLs shown in the Dashboard and notifications. Leave empty to use the browser's current origin.</span>
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-poll-interval">Commit poll interval (seconds)</label>
+                        <input type="number" id="settings-poll-interval" min="15" max="3600" step="1">
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-max-jobs">Max concurrent jobs</label>
+                        <input type="number" id="settings-max-jobs" min="1" max="10" step="1">
+                        <span class="help-text">How many build jobs may run at the same time (1 = serial, like before).</span>
+                    </div>
+                </div>
+                <div class="settings-card">
+                    <h3>Job timeouts</h3>
+                    <div class="form-group">
+                        <label for="settings-script-timeout">Script jobs (minutes)</label>
+                        <input type="number" id="settings-script-timeout" min="1" max="1440" step="1">
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-rsync-timeout">Rsync deploys (minutes)</label>
+                        <input type="number" id="settings-rsync-timeout" min="1" max="1440" step="1">
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-ssh-timeout">SSH deploys (minutes)</label>
+                        <input type="number" id="settings-ssh-timeout" min="1" max="1440" step="1">
+                    </div>
+                </div>
+                <div class="settings-card">
+                    <h3>Maintenance &amp; retention</h3>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="settings-maintenance"> Maintenance mode (pause webhooks, polling and new jobs)
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-log-retention">Log retention (days, 0 = never delete)</label>
+                        <input type="number" id="settings-log-retention" min="0" max="3650" step="1">
+                        <span class="help-text">Build logs older than this are deleted hourly. Run history in the dashboard is kept.</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Database backup</label>
+                        <button type="button" id="settings-backup-btn" class="btn">Download database backup</button>
+                        <span class="help-text">Downloads a consistent snapshot of the SQLite database (WAL-safe). Restore by replacing data/at-field-ci.db while the server is stopped.</span>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Save Settings</button>
+                </div>
+            </form>
+            <div id="settings-runtime" class="settings-runtime help-text"></div>
+        </section>
+
         <!-- USERS -->
         <section id="users-tab" class="tab-content">
             <div class="tab-header">
-                <h2>Users</h2>
                 <button id="add-user-btn" class="btn btn-primary">+ Add User</button>
             </div>
             <div id="users-list" class="actions-list">
@@ -288,7 +450,7 @@
 
     <!-- ACTION MODAL -->
     <div id="action-modal" class="modal">
-        <div class="modal-content">
+        <div class="modal-content modal-large">
             <div class="modal-header">
                 <h2 id="action-modal-title">Add Action</h2>
                 <button class="close-btn" data-modal="action-modal" type="button">&times;</button>
@@ -309,6 +471,11 @@
                 <div id="script-fields" class="form-group hidden">
                     <label for="action-script">Script</label>
                     <select id="action-script"><option value="">Select script</option></select>
+                </div>
+                <div id="action-script-editor" class="form-group hidden">
+                    <label for="action-script-content">Script template</label>
+                    <span class="help-text" id="action-script-editor-hint">Template only — edit it to fit your build. Changes are saved to the script.</span>
+                    <textarea id="action-script-content" class="monospace script-editor" rows="14" spellcheck="false"></textarea>
                 </div>
                 <div id="deploy-fields" class="form-group hidden">
                     <label for="deploy-method">Deploy Method</label>
@@ -402,6 +569,86 @@
         </div>
     </div>
 
+    <!-- NOTIFICATION MODAL -->
+    <div id="notification-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="notification-modal-title">Add Notification Target</h2>
+                <button class="close-btn" data-modal="notification-modal" type="button">&times;</button>
+            </div>
+            <form id="notification-form">
+                <input type="hidden" id="notification-edit-id" value="">
+                <div class="form-group">
+                    <label for="notification-name">Name</label>
+                    <input type="text" id="notification-name" placeholder="e.g. Team Discord" required>
+                </div>
+                <div class="form-group">
+                    <label for="notification-type">Type</label>
+                    <select id="notification-type" required>
+                        <option value="generic">Generic webhook (SMS/email APIs)</option>
+                        <option value="discord">Discord</option>
+                        <option value="slack">Slack</option>
+                        <option value="telegram">Telegram</option>
+                        <option value="pushover">Pushover</option>
+                        <option value="gotify">Gotify</option>
+                        <option value="ntfy">ntfy</option>
+                    </select>
+                </div>
+                <div class="form-group" id="notif-field-url">
+                    <label for="notification-url">Webhook URL</label>
+                    <input type="url" id="notification-url" placeholder="https://…" autocomplete="off">
+                    <span class="help-text" id="notif-url-help">Incoming webhook URL</span>
+                </div>
+                <div class="form-group hidden" id="notif-field-topic">
+                    <label for="notification-topic">Topic / Channel</label>
+                    <input type="text" id="notification-topic" placeholder="my-ci-alerts" autocomplete="off">
+                </div>
+                <div class="form-group hidden" id="notif-field-bot-token">
+                    <label for="notification-bot-token">Bot Token</label>
+                    <input type="password" id="notification-bot-token" placeholder="123456:ABC-DEF…" autocomplete="new-password">
+                </div>
+                <div class="form-group hidden" id="notif-field-chat-id">
+                    <label for="notification-chat-id">Chat ID</label>
+                    <input type="text" id="notification-chat-id" placeholder="-1001234567890" autocomplete="off">
+                </div>
+                <div class="form-group hidden" id="notif-field-api-token">
+                    <label for="notification-api-token">API / App Token</label>
+                    <input type="password" id="notification-api-token" autocomplete="new-password">
+                </div>
+                <div class="form-group hidden" id="notif-field-user-key">
+                    <label for="notification-user-key">User Key</label>
+                    <input type="text" id="notification-user-key" autocomplete="off">
+                </div>
+                <div class="form-group hidden" id="notif-field-token">
+                    <label for="notification-token">Bearer Token (optional)</label>
+                    <input type="password" id="notification-token" autocomplete="new-password">
+                </div>
+                <div class="form-divider">Notify on events</div>
+                <div class="checkbox-grid">
+                    <label class="checkbox-label"><input type="checkbox" class="notif-event" value="job_start"> Job started</label>
+                    <label class="checkbox-label"><input type="checkbox" class="notif-event" value="job_success"> Job succeeded</label>
+                    <label class="checkbox-label"><input type="checkbox" class="notif-event" value="job_failure" checked> Job failed</label>
+                    <label class="checkbox-label"><input type="checkbox" class="notif-event" value="job_timeout" checked> Job timed out</label>
+                    <label class="checkbox-label"><input type="checkbox" class="notif-event" value="poll_error" checked> Poll error</label>
+                </div>
+                <div class="form-group" style="margin-top:16px;">
+                    <label for="notification-message-template">Custom message template (optional)</label>
+                    <textarea id="notification-message-template" class="monospace" rows="5" placeholder="Paste a custom message. Use {{title}}, {{message}}, {{event}}, {{repo}}, {{keyword}}, {{duration}}, {{status}}, {{commit}} …" style="width:100%;"></textarea>
+                    <span class="help-text">Replaces the default message. Any <span class="monospace">{{field}}</span> is filled from the event payload — add your own extra fields, e.g. <span class="monospace">{{repo_slug}} / {{trigger}} / {{job_id}}</span>. Leave empty for the default message.</span>
+                </div>
+                <div class="form-group" style="margin-top:16px;">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="notification-enabled" checked> Enabled
+                    </label>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn" data-modal="notification-modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Target</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- SECRET MODAL -->
     <div id="secret-modal" class="modal">
         <div class="modal-content">
@@ -429,6 +676,21 @@
             </div>
             <div class="modal-body">
                 <div id="log-content" class="log-viewer">
+                    <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RUN DETAILS -->
+    <div id="run-modal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2 id="run-modal-title">Run Details</h2>
+                <button class="close-btn" data-modal="run-modal" type="button">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="run-detail" class="run-detail">
                     <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
                 </div>
             </div>

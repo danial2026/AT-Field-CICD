@@ -1,12 +1,32 @@
 # AT FIELD CICD
 
-![Version](https://img.shields.io/badge/version-0.0.1-blue)
+![Version](https://img.shields.io/badge/version-0.0.2-blue)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 CI/CD platform with a web dashboard. Builds, tests, and deploys with strong isolation and controlled pipelines - like an Absolute Terror Field for your projects
 
-![Dashboard](screenshots/dashboard.png)
+## Screenshots
+
+| Login | Dashboard |
+|-------|-----------|
+| ![Login](screenshots/login.png) | ![Dashboard](screenshots/dashboard.png) |
+
+| Repositories | Scripts |
+|--------------|---------|
+| ![Repositories](screenshots/repos.png) | ![Scripts](screenshots/scripts.png) |
+
+| Notifications | Logs |
+|---------------|------|
+| ![Notifications](screenshots/notifications.png) | ![Logs](screenshots/logs.png) |
+
+| Audit | Settings |
+|-------|----------|
+| ![Audit](screenshots/audit.png) | ![Settings](screenshots/settings.png) |
+
+| Users | Profile |
+|-------|---------|
+| ![Users](screenshots/users.png) | ![Profile](screenshots/profile.png) |
 
 ## Quick Start
 
@@ -24,16 +44,6 @@ Point a repo webhook at `http://your-host:3000/webhook/<slug>`.
 3. Matching actions run one at a time through a serial queue, each with its own log.
 
 **Actions:** `script` (run a `.sh`), `deploy` via `rsync`, or `deploy` via `ssh`.
-
-## Screenshots
-
-| Login | Dashboard |
-|-------|-----------|
-| ![Login](screenshots/login.png) | ![Dashboard](screenshots/dashboard.png) |
-
-| Scripts | Logs | Audit |
-|---------|------|-------|
-| ![Scripts](screenshots/scripts.png) | ![Logs](screenshots/logs.png) | ![Audit](screenshots/audit.png) |
 
 ## Security
 
@@ -57,3 +67,7 @@ bash test-smoke.sh                          # smoke tests
 ## License
 
 [MIT](LICENSE) - © 2026 danial
+
+## AI Assistance
+
+Parts of this project were developed with assistance from DeepSeek.
