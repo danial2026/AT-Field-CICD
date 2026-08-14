@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# server-setup-proxy.sh   v1.0.0   —   run ON THE UBUNTU SERVER
+# server-setup-proxy.sh   v1.1.0   —   run ON THE UBUNTU SERVER
 # =============================================================================
 # Points the server's git, Docker daemon, and the AT-Field CI container at an
 # HTTP proxy (typically tinyproxy on your Mac) so they reach the internet
@@ -29,6 +29,7 @@
 #
 #   PROXY_HOST=<your-mac-ip> PROXY_PORT=8888 bash scripts/proxy/server-setup-proxy.sh
 #   WITH_DOCKER=1 bash scripts/proxy/server-setup-proxy.sh    # ALSO configure Docker (off by default)
+#   DOCKER_RESTART=1        # WITH_DOCKER: allow restarting the docker daemon (restarts ALL containers!)
 #   DOCKER_DNS=8.8.8.8,1.1.1.1 bash scripts/proxy/server-setup-proxy.sh   # override DNS
 #   DRY_RUN=1 bash scripts/proxy/server-setup-proxy.sh        # show actions only
 #   FORCE=1  bash scripts/proxy/server-setup-proxy.sh         # skip pre-flight
@@ -52,7 +53,7 @@ cat <<'BANNER'
 
 BANNER
 
-readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_VERSION="1.1.0"
 readonly LOCK="/tmp/at-field-server-proxy-setup.lock"
 readonly MARKER="# AT-Field CI: LAN proxy bypass (added by server-setup-proxy.sh)"
 
@@ -63,6 +64,7 @@ FORCE="${FORCE:-0}"
 TEST_GIT_REPO="${TEST_GIT_REPO:-https://github.com/octocat/Hello-World.git}"
 DOCKER_DNS="${DOCKER_DNS:-8.8.8.8,1.1.1.1}"
 WITH_DOCKER="${WITH_DOCKER:-0}"
+DOCKER_RESTART="${DOCKER_RESTART:-0}"
 
 # ---------- helpers ----------------------------------------------------------
 log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -81,8 +83,8 @@ rollback() {
     if [ "$ROLLBACK_GIT" = "1" ] || [ "$ROLLBACK_COMPOSE" = "1" ]; then
       err "Failed (exit $rc). Rolling back git + compose changes..."
       [ "$ROLLBACK_GIT" = "1" ] && [ "$DRY_RUN" = "0" ] && {
-        git config --global --unset http.proxy 2>/dev/null || true
-        git config --global --unset https.proxy 2>/dev/null || true
+        eval "$GITCONF --unset http.proxy 2>/dev/null || true"
+        eval "$GITCONF --unset https.proxy 2>/dev/null || true"
         err "  unset git proxy"
       }
       [ "$ROLLBACK_COMPOSE" = "1" ] && [ "$DRY_RUN" = "0" ] && [ -n "${COMPOSE_BAK:-}" ] && {
@@ -164,6 +166,16 @@ info "Proxy target : $PROXY_URL"
 info "Repo dir     : $REPO_DIR"
 [ "$DRY_RUN" = "1" ] && warn "DRY RUN mode — no changes will be made."
 
+# Running via sudo? `git config --global` would write to /root's config and
+# $HOME rc files would be root's — not what we want. Target the invoking user.
+TARGET_HOME="${HOME}"
+GITCONF="git config --global"
+if [ "$(id -u)" = "0" ] && [ -n "${SUDO_USER:-}" ]; then
+  TARGET_HOME="/home/${SUDO_USER}"
+  GITCONF="git config --file ${TARGET_HOME}/.gitconfig"
+  warn "Running via sudo — git + shell config will target ${SUDO_USER} (home: ${TARGET_HOME}), not root."
+fi
+
 # ---------- pre-flight: is the proxy reachable? ------------------------------
 if [ "$FORCE" != "1" ]; then
   info "Pre-flight: testing reachability to $PROXY_URL ..."
@@ -181,15 +193,15 @@ fi
 
 # ---------- 1) git (global, no sudo) -----------------------------------------
 info "[1/4] Configuring git to use the proxy..."
-run "git config --global http.proxy  '$PROXY_URL'"
-run "git config --global https.proxy '$PROXY_URL'"
-run "git config --global http.version HTTP/1.1"
+run "$GITCONF http.proxy  '$PROXY_URL'"
+run "$GITCONF https.proxy '$PROXY_URL'"
+run "$GITCONF http.version HTTP/1.1"
 [ "$DRY_RUN" = "0" ] && ROLLBACK_GIT=1
 info "    done: git http.proxy / https.proxy set"
 
 # ---------- 2) shell no_proxy (no sudo) --------------------------------------
 info "[2/4] Adding no_proxy to shell rc files..."
-for RC in "$HOME/.zshrc" "$HOME/.bashrc"; do
+for RC in "$TARGET_HOME/.zshrc" "$TARGET_HOME/.bashrc"; do
   if [ "$DRY_RUN" = "0" ]; then
     touch "$RC"
     if ! grep -qF "$MARKER" "$RC"; then
@@ -317,14 +329,23 @@ PYEOF
   $SUDO mv "$DNS_JSON_TMP" "$DAEMON_JSON"
   info "    written: $DAEMON_JSON"
 
-  info "    reloading systemd + restarting docker..."
+  info "    applying config..."
   $SUDO systemctl daemon-reload
-  if $SUDO systemctl restart docker; then
-    info "    OK: docker restarted"
+  $SUDO systemctl reload docker 2>/dev/null \
+    && info "    OK: docker reloaded (SIGHUP — no containers restarted; daemon.json DNS applied)" \
+    || warn "    docker reload failed — check: journalctl -u docker -n 50"
+  if [ "$DOCKER_RESTART" = "1" ]; then
+    info "    DOCKER_RESTART=1: restarting docker daemon (restarts ALL containers)..."
+    if $SUDO systemctl restart docker; then
+      info "    OK: docker restarted"
+    else
+      err "    docker failed to restart. Check: journalctl -u docker -n 50"
+      err "    Recover: sudo rm -f $DAEMON_CONF && sudo systemctl daemon-reload && sudo systemctl restart docker"
+      exit 8
+    fi
   else
-    err "    docker failed to restart. Check: journalctl -u docker -n 50"
-    err "    Recover: sudo rm -f $DAEMON_CONF && sudo systemctl daemon-reload && sudo systemctl restart docker"
-    exit 8
+    warn "    Proxy env applies to the daemon only after a restart."
+    warn "    Run later at a quiet time: sudo systemctl restart docker   (restarts ALL containers)"
   fi
 fi
 fi
@@ -332,7 +353,7 @@ fi
 # ---------- post-flight ------------------------------------------------------
 info "Post-flight: verifying configuration..."
 if [ "$DRY_RUN" = "0" ]; then
-  GIT_PROXY="$(git config --global --get http.proxy 2>/dev/null || echo '(unset)')"
+  GIT_PROXY="$($GITCONF --get http.proxy 2>/dev/null || echo '(unset)')"
   info "  git http.proxy = $GIT_PROXY"
   if [ "$WITH_DOCKER" = "1" ]; then
     DOCKER_ENV="$($SUDO systemctl show docker -p Environment 2>/dev/null | tr ' ' '\n' | grep -o 'HTTPS_PROXY=[^ ]*' || echo 'set')"

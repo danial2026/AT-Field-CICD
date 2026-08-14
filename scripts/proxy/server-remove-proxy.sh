@@ -18,16 +18,18 @@
 # Usage:
 #   cd /path/to/your/repo
 #   bash scripts/proxy/server-remove-proxy.sh
+#   DOCKER_RESTART=1 bash scripts/proxy/server-remove-proxy.sh  # allow docker daemon restart (restarts ALL containers)
 #   DRY_RUN=1 bash scripts/proxy/server-remove-proxy.sh   # show actions only
 #   bash scripts/proxy/server-remove-proxy.sh --help
 # =============================================================================
 set -euo pipefail
 
-readonly SCRIPT_VERSION="1.0.0"
+readonly SCRIPT_VERSION="1.1.0"
 readonly LOCK="/tmp/at-field-server-proxy-remove.lock"
 readonly MARKER="# AT-Field CI: LAN proxy bypass (added by server-setup-proxy.sh)"
 
 DRY_RUN="${DRY_RUN:-0}"
+DOCKER_RESTART="${DOCKER_RESTART:-0}"
 
 # ---------- helpers ----------------------------------------------------------
 log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -73,18 +75,28 @@ info "server-remove-proxy.sh v$SCRIPT_VERSION"
 info "Repo dir: $REPO_DIR"
 [ "$DRY_RUN" = "1" ] && warn "DRY RUN mode — nothing will be changed."
 
+# Same sudo-awareness as the setup script: `git config --global` under sudo
+# would touch /root's config, not the invoking user's.
+TARGET_HOME="${HOME}"
+GITCONF="git config --global"
+if [ "$(id -u)" = "0" ] && [ -n "${SUDO_USER:-}" ]; then
+  TARGET_HOME="/home/${SUDO_USER}"
+  GITCONF="git config --file ${TARGET_HOME}/.gitconfig"
+  warn "Running via sudo — git + shell config will target ${SUDO_USER} (home: ${TARGET_HOME}), not root."
+fi
+
 # ---------- 1) git -----------------------------------------------------------
 info "[1/4] Removing git global proxy config..."
 if [ "$DRY_RUN" = "1" ]; then
-  log "  DRY   git config --global --unset http.proxy / https.proxy"
+  log "  DRY   $GITCONF --unset http.proxy / https.proxy"
 else
-  git config --global --unset http.proxy  2>/dev/null && info "    unset http.proxy" || info "    (http.proxy was not set)"
-  git config --global --unset https.proxy 2>/dev/null && info "    unset https.proxy" || info "    (https.proxy was not set)"
+  eval "$GITCONF --unset http.proxy 2>/dev/null" && info "    unset http.proxy" || info "    (http.proxy was not set)"
+  eval "$GITCONF --unset https.proxy 2>/dev/null" && info "    unset https.proxy" || info "    (https.proxy was not set)"
 fi
 
 # ---------- 2) shell rc files ------------------------------------------------
 info "[2/4] Removing no_proxy block from shell rc files..."
-for RC in "$HOME/.zshrc" "$HOME/.bashrc"; do
+for RC in "$TARGET_HOME/.zshrc" "$TARGET_HOME/.bashrc"; do
   [ -f "$RC" ] || { info "    (no $RC)"; continue; }
   if [ "$DRY_RUN" = "1" ]; then
     grep -qF "$MARKER" "$RC" && log "  DRY   would remove block from $RC" || info "    (nothing in $RC)"
@@ -118,7 +130,7 @@ info "[4/4] Removing Docker daemon proxy drop-in + DNS (needs sudo)..."
 DAEMON_CONF="/etc/systemd/system/docker.service.d/http-proxy.conf"
 DAEMON_JSON="/etc/docker/daemon.json"
 if [ "$DRY_RUN" = "1" ]; then
-  log "  DRY   would remove $DAEMON_CONF + DNS config from $DAEMON_JSON + restart docker"
+  log "  DRY   would remove $DAEMON_CONF + DNS config from $DAEMON_JSON + reload docker (no restart; DOCKER_RESTART=1 to restart)"
 else
   if sudo -n true 2>/dev/null; then SUDO="sudo -n"; else SUDO="sudo"; info "    (sudo will prompt)"; fi
 
@@ -149,17 +161,21 @@ PYEOF
   fi
 
   $SUDO systemctl daemon-reload
-  if $SUDO systemctl restart docker; then
-    info "    docker restarted"
+  $SUDO systemctl reload docker 2>/dev/null \
+    && info "    docker reloaded (SIGHUP — no containers restarted)" \
+    || warn "    docker reload failed — check: journalctl -u docker -n 50"
+  if [ "$DOCKER_RESTART" = "1" ]; then
+    $SUDO systemctl restart docker && info "    docker restarted (restarts ALL containers) — DOCKER_RESTART=1"
   else
-    warn "    docker restart failed — check: journalctl -u docker -n 50"
+    warn "    Drop-in removed; the daemon keeps its old proxy env until restarted."
+    warn "    Run later at a quiet time: sudo systemctl restart docker   (restarts ALL containers)"
   fi
 fi
 
 # ---------- post-flight ------------------------------------------------------
 info "Post-flight: verifying removal..."
 if [ "$DRY_RUN" = "0" ]; then
-  GIT_PROXY="$(git config --global --get http.proxy 2>/dev/null || true)"
+  GIT_PROXY="$($GITCONF --get http.proxy 2>/dev/null || true)"
   [ -z "$GIT_PROXY" ] && info "  git http.proxy = (unset) [OK]" || warn "  git http.proxy = $GIT_PROXY (still set!)"
   [ -f "$COMPOSE_FILE" ] && warn "  $COMPOSE_FILE still exists" || info "  $COMPOSE_FILE gone [OK]"
   if [ "${SUDO:-}" != "" ]; then
