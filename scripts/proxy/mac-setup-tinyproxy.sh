@@ -101,6 +101,12 @@ if [ -z "${LAN_SUBNET:-}" ]; then
   fi
   [ -n "${LAN_SUBNET:-}" ] || { err "LAN_SUBNET is required. Set via env or run interactively."; exit 5; }
 fi
+# Normalize: a bare IP like "192.168.0.103" is almost always meant as the LAN
+# prefix; as-is it would only grant tinyproxy access to that single host.
+if echo "$LAN_SUBNET" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+  LAN_SUBNET="$(echo "$LAN_SUBNET" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+').0/24"
+  warn "Normalized to subnet: $LAN_SUBNET (bare IPs are treated as the whole /24)"
+fi
 info "LAN subnet: $LAN_SUBNET"
 
 # ---------- pre-flight: is a VPN tunnel up? -----------------------------------
