@@ -5,8 +5,9 @@ services:
       dockerfile: Dockerfile
     container_name: at-field-ci
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+    # NOTE: uncomment if you aren't using nginx and want to access with port
+    #ports:
+    #  - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
