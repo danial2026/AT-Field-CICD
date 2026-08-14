@@ -10,8 +10,8 @@
 # What it configures:
 #   1. git (global http/https proxy)                 — no sudo
 #   2. shell no_proxy in ~/.zshrc and ~/.bashrc      — no sudo
-#   3. docker-compose.override.yml (container env)  — no sudo
-#   4. Docker daemon proxy drop-in + DNS (docker pull/build) — NEEDS SUDO
+#   3+4. Docker (compose override + daemon proxy + DNS) — OPT-IN (WITH_DOCKER=1,
+#        needs sudo); Docker is left untouched by default.
 #
 # Requirements:
 #   - Run from inside the AT-Field-CICD repo (or its parent layout).
@@ -28,6 +28,7 @@
 #   bash scripts/proxy/server-setup-proxy.sh
 #
 #   PROXY_HOST=<your-mac-ip> PROXY_PORT=8888 bash scripts/proxy/server-setup-proxy.sh
+#   WITH_DOCKER=1 bash scripts/proxy/server-setup-proxy.sh    # ALSO configure Docker (off by default)
 #   DOCKER_DNS=8.8.8.8,1.1.1.1 bash scripts/proxy/server-setup-proxy.sh   # override DNS
 #   DRY_RUN=1 bash scripts/proxy/server-setup-proxy.sh        # show actions only
 #   FORCE=1  bash scripts/proxy/server-setup-proxy.sh         # skip pre-flight
@@ -61,6 +62,7 @@ DRY_RUN="${DRY_RUN:-0}"
 FORCE="${FORCE:-0}"
 TEST_GIT_REPO="${TEST_GIT_REPO:-https://github.com/octocat/Hello-World.git}"
 DOCKER_DNS="${DOCKER_DNS:-8.8.8.8,1.1.1.1}"
+WITH_DOCKER="${WITH_DOCKER:-0}"
 
 # ---------- helpers ----------------------------------------------------------
 log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -203,8 +205,12 @@ for RC in "$HOME/.zshrc" "$HOME/.bashrc"; do
   fi
 done
 
-# ---------- 3) docker-compose.override.yml (atomic, backup) -----------------
-info "[3/4] Writing docker-compose.override.yml (container proxy env)..."
+# ---------- 3+4) Docker (compose override + daemon + DNS) — OPT-IN -----------
+if [ "$WITH_DOCKER" != "1" ]; then
+  info "[3/4] Skipping Docker configuration (left untouched by default)."
+  info "      Re-run with WITH_DOCKER=1 to route docker build/pull through the proxy."
+else
+  info "[3/4] Writing docker-compose.override.yml (container proxy env)..."
 if [ "$DRY_RUN" = "0" ]; then
   if [ -f "$COMPOSE_FILE" ]; then
     COMPOSE_BAK="$COMPOSE_FILE.bak.$(date +%Y%m%d%H%M%S)"
@@ -321,13 +327,14 @@ PYEOF
     exit 8
   fi
 fi
+fi
 
 # ---------- post-flight ------------------------------------------------------
 info "Post-flight: verifying configuration..."
 if [ "$DRY_RUN" = "0" ]; then
   GIT_PROXY="$(git config --global --get http.proxy 2>/dev/null || echo '(unset)')"
   info "  git http.proxy = $GIT_PROXY"
-  if [ "${SUDO:-}" != "" ]; then
+  if [ "$WITH_DOCKER" = "1" ]; then
     DOCKER_ENV="$($SUDO systemctl show docker -p Environment 2>/dev/null | tr ' ' '\n' | grep -o 'HTTPS_PROXY=[^ ]*' || echo 'set')"
     info "  docker HTTPS_PROXY = $DOCKER_ENV"
     DOCKER_DNS_CHECK="$($SUDO python3 -c "import json; d=json.load(open('/etc/docker/daemon.json')); print(','.join(d.get('dns',[])))" 2>/dev/null || echo 'unset')"
@@ -348,7 +355,8 @@ cat <<EOF
 ============================================================
  DONE.  server-setup-proxy.sh v$SCRIPT_VERSION
 ============================================================
-  Configured: git, shell env, docker-compose override, docker daemon proxy + DNS
+  Configured: git, shell env
+$( [ "$WITH_DOCKER" = "1" ] && echo "  Also configured: docker-compose override, docker daemon proxy + DNS" || echo "  Docker left untouched (WITH_DOCKER=1 to configure it)" )
 $( [ "$DRY_RUN" = "1" ] && echo " (DRY RUN — nothing was actually changed)" )
   Next:
     source ~/.zshrc             # reload shell env (or export HTTP_PROXY / HTTPS_PROXY manually)

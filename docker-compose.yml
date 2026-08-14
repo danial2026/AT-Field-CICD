@@ -19,8 +19,8 @@ services:
       - ./data:/app/data
       - ./scripts:/app/scripts
       - ./logs:/app/logs
-      - ./ssh:/app/ssh:ro
-      - /etc/ssh/known_hosts:/app/ssh/known_hosts:ro
+      - ./ssh:/app/ssh
+      - ${HOME}/.ssh/known_hosts:/app/ssh/known_hosts:ro
     logging:
       driver: "json-file"
       options:
