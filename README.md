@@ -8,29 +8,28 @@ CI/CD platform with a web dashboard. Builds, tests, and deploys with strong isol
 
 ## Screenshots
 
-| Login Screen | Dashboard View |
-| --- | --- |
-| ![Login](screenshots/login.png) | ![Dashboard](screenshots/dashboard.png) |
-
-
-| Repositories | Script Manager |
-| --- | --- |
-| ![Repositories](screenshots/repos.png) | ![Scripts](screenshots/scripts.png) |
-
-
-| Notifications | Build Logs |
-| --- | --- |
-| ![Notifications](screenshots/notifications.png) | ![Logs](screenshots/logs.png) |
-
-
-| Audit Trail | Settings Page |
-| --- | --- |
-| ![Audit](screenshots/audit.png) | ![Settings](screenshots/settings.png) |
-
-
-| Users & Roles | Profile Page |
-| --- | --- |
-| ![Users](screenshots/users.png) | ![Profile](screenshots/profile.png) |
+<table>
+  <tr>
+    <td align="center"><b>Login Screen</b><br><img src="screenshots/login.png" width="400"></td>
+    <td align="center"><b>Dashboard View</b><br><img src="screenshots/dashboard.png" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Repositories</b><br><img src="screenshots/repos.png" width="400"></td>
+    <td align="center"><b>Script Manager</b><br><img src="screenshots/scripts.png" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Notifications</b><br><img src="screenshots/notifications.png" width="400"></td>
+    <td align="center"><b>Build Logs</b><br><img src="screenshots/logs.png" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Audit Trail</b><br><img src="screenshots/audit.png" width="400"></td>
+    <td align="center"><b>Settings Page</b><br><img src="screenshots/settings.png" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Users &amp; Roles</b><br><img src="screenshots/users.png" width="400"></td>
+    <td align="center"><b>Profile Page</b><br><img src="screenshots/profile.png" width="400"></td>
+  </tr>
+</table>
 
 ## Quick Start
 
