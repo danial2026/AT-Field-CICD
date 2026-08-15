@@ -808,7 +808,22 @@ async function pollRepo(repo, { force = false } = {}) {
       gap: !!gap,
     };
   } catch (err) {
-    console.error('[POLL]', repo.full_name, err.message);
+    console.error(
+      '[POLL]',
+      repo.full_name,
+      'failed:',
+      err.message,
+      '(provider:',
+      repo.provider || 'github',
+      ', clone_url:',
+      repo.clone_url,
+      ', branch:',
+      repo.poll_branch || '(default)',
+      ')'
+    );
+    if (err.cause) {
+      console.error('[POLL]', repo.full_name, 'cause:', err.cause.message, err.cause.code ? `(${err.cause.code})` : '');
+    }
     notifyPollError(repo, err.message);
     db.setRepoPollCursor(repo.id, {
       last_commit_sha: repo.last_commit_sha,
