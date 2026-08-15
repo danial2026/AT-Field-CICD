@@ -144,6 +144,7 @@
             <button class="tab-button" data-tab="notifications">Notifications</button>
             <button class="tab-button" data-tab="logs">Logs</button>
             <button class="tab-button" data-tab="audit" data-staff="1">Audit</button>
+            <button class="tab-button" data-tab="machines" data-staff="1">Machines</button>
             <button class="tab-button" data-tab="settings" data-staff="1">Settings</button>
             <button class="tab-button" data-tab="users" data-staff="1">Users</button>
             <button class="tab-button" data-tab="profile">Profile</button>
@@ -194,7 +195,7 @@
                     <h2 id="repo-detail-title">Actions</h2>
                     <div class="item-actions">
                         <button id="back-repos-btn" class="btn btn-small">← Back</button>
-                        <button id="add-action-btn" class="btn btn-primary btn-small" data-staff="1">+ Action</button>
+                        <button id="add-action-btn" class="btn btn-primary btn-small">+ Action</button>
                     </div>
                 </div>
                 <div id="repo-meta" class="repo-meta"></div>
@@ -286,6 +287,18 @@
                     <button type="submit" class="btn btn-primary" id="profile-submit">Update Password</button>
                 </form>
             </div>
+
+            <div class="profile-card settings-about">
+                <h3>About</h3>
+                <div class="form-group">
+                    <label>App version</label>
+                    <span id="settings-version" class="about-version">—</span>
+                </div>
+                <div class="about-links">
+                    <a class="btn" href="https://github.com/danial2026/AT-Field-CICD" target="_blank" rel="noopener noreferrer">Source Code</a>
+                    <a class="btn" href="https://danials.org" target="_blank" rel="noopener noreferrer">Developer Site</a>
+                </div>
+            </div>
         </section>
 
         <!-- AUDIT -->
@@ -294,6 +307,24 @@
                 <button id="refresh-audit-btn" class="btn">Refresh</button>
             </div>
             <div id="audit-list" class="logs-list">
+                <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
+            </div>
+        </section>
+
+        <!-- DEPLOYMENT MACHINES -->
+        <section id="machines-tab" class="tab-content">
+            <div class="tab-header">
+                <span class="help-text">DevOps-only · deployment machines the CI connects to. Each action deploys to at least one of these, then runs its script on the machine.</span>
+                <button id="add-machine-btn" class="btn btn-primary">+ Add Machine</button>
+            </div>
+            <div id="machines-list" class="actions-list">
+                <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
+            </div>
+            <div class="tab-header tab-section-head">
+                <span class="help-text">SSH keys available to machines. Uploaded here, stored encrypted at rest. Machines reference a key by name.</span>
+                <button id="add-key-btn" class="btn">+ Upload SSH Key</button>
+            </div>
+            <div id="ssh-keys-list" class="actions-list">
                 <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
             </div>
         </section>
@@ -427,7 +458,7 @@
                     <label class="checkbox-label">
                         <input type="checkbox" id="repo-poll-enabled"> Poll for commits
                     </label>
-                    <span class="help-text">Stores last seen SHA; on startup and on an interval, checks for missed commits and runs matching actions. Works with or instead of webhooks. Needs a git token for private repos.</span>
+                    <span class="help-text">Stores last seen SHA; on startup and on an interval, checks for missed commits and runs matching actions. Works with or instead of webhooks.</span>
                 </div>
                 <div class="form-group">
                     <label for="repo-poll-branch">Poll branch (optional)</label>
@@ -448,6 +479,77 @@
         </div>
     </div>
 
+    <!-- MACHINE MODAL -->
+    <div id="machine-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="machine-modal-title">Add Deployment Machine</h2>
+                <button class="close-btn" data-modal="machine-modal" type="button">&times;</button>
+            </div>
+            <form id="machine-form">
+                <input type="hidden" id="machine-edit-id" value="">
+                <div class="form-group">
+                    <label for="machine-name">Name</label>
+                    <input type="text" id="machine-name" placeholder="prod-web-01" required autocomplete="off">
+                    <span class="help-text">Shown in action selector lists.</span>
+                </div>
+                <div class="form-group">
+                    <label for="machine-user">SSH User</label>
+                    <input type="text" id="machine-user" placeholder="deployer" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="machine-host">Host</label>
+                    <input type="text" id="machine-host" placeholder="prod.example.com" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="machine-port">SSH Port</label>
+                    <input type="number" id="machine-port" value="22" min="1" max="65535" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="machine-ssh-key">SSH Key</label>
+                    <select id="machine-ssh-key">
+                        <option value="">Default (no key)</option>
+                    </select>
+                    <span class="help-text">Uploaded keys from the SSH Keys section below. Stored encrypted; used only during a job run.</span>
+                </div>
+                <div class="form-group">
+                    <label for="machine-ssh-options">SSH Options</label>
+                    <input type="text" id="machine-ssh-options" placeholder="-o StrictHostKeyChecking=accept-new" autocomplete="off">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn" data-modal="machine-modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Machine</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- SSH KEY MODAL -->
+    <div id="key-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Upload SSH Key</h2>
+                <button class="close-btn" data-modal="key-modal" type="button">&times;</button>
+            </div>
+            <form id="key-form">
+                <div class="form-group">
+                    <label for="key-name">Name</label>
+                    <input type="text" id="key-name" placeholder="prod-deploy-key" required autocomplete="off">
+                    <span class="help-text">How machines reference this key in their dropdown.</span>
+                </div>
+                <div class="form-group">
+                    <label for="key-file">Private key file</label>
+                    <input type="file" id="key-file" required>
+                    <span class="help-text">PEM / OpenSSH private key (id_rsa, id_ed25519, …). Encrypted with the master key before it is stored.</span>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn" data-modal="key-modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Upload Key</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- ACTION MODAL -->
     <div id="action-modal" class="modal">
         <div class="modal-content modal-large">
@@ -460,48 +562,63 @@
                     <label for="action-keyword">Keyword</label>
                     <input type="text" id="action-keyword" placeholder="e.g. BUILD_DEV" required>
                 </div>
+
+                <div class="form-divider">Deploy</div>
                 <div class="form-group">
-                    <label for="action-type">Type</label>
-                    <select id="action-type" required>
-                        <option value="">Select action type</option>
-                        <option value="script">Script</option>
-                        <option value="deploy">Deploy</option>
-                    </select>
+                    <label>Deployment Machines</label>
+                    <div id="action-machines-picker" class="checkbox-grid machine-picker">
+                        <p class="empty-state">No machines yet</p>
+                    </div>
+                    <span class="help-text">Pick at least one machine. The action deploys to each selected machine, then runs its script on that machine. Machines are managed by DevOps in the Machines tab.</span>
                 </div>
-                <div id="script-fields" class="form-group hidden">
-                    <label for="action-script">Script</label>
-                    <select id="action-script"><option value="">Select script</option></select>
-                </div>
-                <div id="action-script-editor" class="form-group hidden">
-                    <label for="action-script-content">Script template</label>
-                    <span class="help-text" id="action-script-editor-hint">Template only — edit it to fit your build. Changes are saved to the script.</span>
-                    <textarea id="action-script-content" class="monospace script-editor" rows="14" spellcheck="false"></textarea>
-                </div>
-                <div id="deploy-fields" class="form-group hidden">
+                <div class="form-group">
                     <label for="deploy-method">Deploy Method</label>
-                    <select id="deploy-method">
+                    <select id="deploy-method" required>
                         <option value="">Select method</option>
                         <option value="rsync">rsync</option>
                         <option value="ssh">SSH</option>
                     </select>
-                    <label for="deploy-user" style="margin-top: 16px;">User</label>
-                    <input type="text" id="deploy-user" placeholder="deployer">
-                    <label for="deploy-host" style="margin-top: 16px;">Host</label>
-                    <input type="text" id="deploy-host" placeholder="prod.example.com">
-                    <label for="deploy-ssh-key" style="margin-top: 16px;">SSH Key Path</label>
-                    <input type="text" id="deploy-ssh-key" placeholder="/app/ssh/id_rsa">
-                    <label for="deploy-ssh-options" style="margin-top: 16px;">SSH Options</label>
-                    <input type="text" id="deploy-ssh-options" placeholder="-o StrictHostKeyChecking=accept-new">
-                    <div id="rsync-fields" class="hidden">
-                        <label for="deploy-source" style="margin-top: 16px;">Source</label>
-                        <input type="text" id="deploy-source" placeholder="dist/">
-                        <label for="deploy-destination" style="margin-top: 16px;">Destination</label>
-                        <input type="text" id="deploy-destination" placeholder="/var/www/app/">
+                </div>
+                <div id="rsync-fields" class="form-group hidden">
+                    <label for="deploy-source" style="margin-top: 16px;">Source</label>
+                    <input type="text" id="deploy-source" placeholder="dist/">
+                    <span class="help-text">Relative path on this CI host that gets rsync'd to each machine.</span>
+                    <label for="deploy-destination" style="margin-top: 16px;">Destination</label>
+                    <input type="text" id="deploy-destination" placeholder="/var/www/app/">
+                </div>
+                <div id="ssh-fields" class="form-group hidden">
+                    <label for="deploy-command" style="margin-top: 16px;">Command</label>
+                    <textarea id="deploy-command" rows="3" placeholder="cd /app && npm run deploy"></textarea>
+                    <span class="help-text">Runs on each deployment machine via SSH, before the script.</span>
+                </div>
+
+                <div class="form-divider">Script</div>
+                <div class="form-group">
+                    <label for="action-script">Script</label>
+                    <select id="action-script"><option value="">Select script</option></select>
+                </div>
+                <div id="action-script-editor" class="form-group">
+                    <label for="action-script-content">Script template</label>
+                    <span class="help-text" id="action-script-editor-hint">Template only — edit it to fit your build. Changes are saved to the script.</span>
+                    <textarea id="action-script-content" class="monospace script-editor" rows="14" spellcheck="false"></textarea>
+                    <span class="help-text">Runs on each deployment machine. Env: CI_KEYWORD, CI_REPO, CI_COMMIT, CI_PROVIDER, CI_GIT_USER, CI_GIT_TOKEN, CI_CLONE_AUTH_URL.</span>
+                </div>
+
+                <div class="form-divider">Notifications</div>
+                <div class="form-group">
+                    <label>Notification Targets</label>
+                    <div id="action-notify-picker" class="checkbox-grid">
+                        <p class="empty-state">Loading your notification targets…</p>
                     </div>
-                    <div id="ssh-fields" class="hidden">
-                        <label for="deploy-command" style="margin-top: 16px;">Command</label>
-                        <textarea id="deploy-command" rows="3" placeholder="cd /app && npm run deploy"></textarea>
+                    <span class="help-text">Targets selected here get a notification when this action finishes — separate from their "Notify on events" subscriptions. Only <em>enabled</em> targets are actually notified; disabled ones are skipped.</span>
+                </div>
+                <div class="form-group">
+                    <label for="action-notify-template">Custom message template (optional)</label>
+                    <div class="template-input-row">
+                        <textarea id="action-notify-template" class="monospace" rows="4" spellcheck="false"></textarea>
+                        <button type="button" id="action-notify-template-reset" class="btn btn-small">Reset</button>
                     </div>
+                    <span class="help-text">Replaces the default message. Placeholders like <span class="monospace">{{title}} {{message}} {{repo}} {{keyword}} {{status}} {{duration}} {{commit}} {{trigger}}</span> are filled from the job result.</span>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn" data-modal="action-modal">Cancel</button>
@@ -633,8 +750,11 @@
                 </div>
                 <div class="form-group" style="margin-top:16px;">
                     <label for="notification-message-template">Custom message template (optional)</label>
-                    <textarea id="notification-message-template" class="monospace" rows="5" placeholder="Paste a custom message. Use {{title}}, {{message}}, {{event}}, {{repo}}, {{keyword}}, {{duration}}, {{status}}, {{commit}} …" style="width:100%;"></textarea>
-                    <span class="help-text">Replaces the default message. Any <span class="monospace">{{field}}</span> is filled from the event payload — add your own extra fields, e.g. <span class="monospace">{{repo_slug}} / {{trigger}} / {{job_id}}</span>. Leave empty for the default message.</span>
+                    <div class="template-input-row">
+                        <textarea id="notification-message-template" class="monospace" rows="5" spellcheck="false"></textarea>
+                        <button type="button" id="notification-template-reset" class="btn btn-small">Reset</button>
+                    </div>
+                    <span class="help-text">Replaces the default message. Any <span class="monospace">{{field}}</span> is filled from the event payload — add your own extra fields, e.g. <span class="monospace">{{repo_slug}} / {{trigger}} / {{job_id}}</span>. Reset restores the default template.</span>
                 </div>
                 <div class="form-group" style="margin-top:16px;">
                     <label class="checkbox-label">

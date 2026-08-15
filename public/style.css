@@ -26,6 +26,10 @@
   --white-10: rgba(255, 255, 255, 0.10);
   --white-30: rgba(255, 255, 255, 0.30);
   --white-50: rgba(255, 255, 255, 0.50);
+
+  /* Native controls (selects, option lists, file pickers, spinners) render
+     in the dark scheme so every dropdown stays strictly black & white */
+  color-scheme: dark;
 }
 
 /* BASE STYLES */
@@ -93,8 +97,7 @@ pre,
 }
 
 header {
-  border-bottom: 1px solid var(--divider);
-  padding: 0 0 24px;
+  padding: 0 0 12px;
 }
 
 header h1 {
@@ -111,6 +114,13 @@ header h1 {
   gap: 0;
   border-bottom: 1px solid var(--divider);
   margin-bottom: 32px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab-button {
@@ -163,8 +173,7 @@ header h1 {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 24px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--divider);
+  padding-bottom: 8px;
 }
 
 .tab-header h2 {
@@ -180,6 +189,11 @@ header h1 {
 #notifications-tab > .tab-header,
 #users-tab > .tab-header {
   justify-content: flex-end;
+}
+
+/* Secondary section header inside a tab (e.g. SSH keys under Machines) */
+.tab-section-head {
+  margin-top: 28px;
 }
 
 /* STATUS BAR */
@@ -385,6 +399,8 @@ header h1 {
   font-size: 12px;
   color: var(--text-secondary);
   font-family: 'JetBrains Mono', monospace;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .item-actions {
@@ -652,11 +668,32 @@ header h1 {
   justify-content: flex-end;
   margin-top: 32px;
   padding-top: 16px;
-  border-top: 1px solid var(--divider);
 }
 
 .form-actions button {
   flex: 0 0 auto;
+}
+
+/* Template textarea + Reset button side by side */
+.template-input-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.template-input-row textarea {
+  flex: 1;
+}
+
+.template-input-row .btn {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+  align-self: flex-end;
+}
+
+.muted {
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 /* LOG VIEWER */
@@ -769,12 +806,132 @@ button:active {
   }
 
   .tabs {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
 
   .tab-button {
+    flex: 1 0 auto;
     padding: 12px 16px;
     font-size: 11px;
+  }
+}
+
+/* PHONES */
+
+@media (max-width: 600px) {
+  .container {
+    padding: 16px 12px;
+  }
+
+  header {
+    padding: 0 0 8px;
+  }
+
+  header h1 {
+    font-size: 14px;
+    letter-spacing: 1.5px;
+  }
+
+  /* Ten tabs on a phone: scroll horizontally instead of stacking */
+  .tab-button {
+    padding: 12px 14px;
+    font-size: 10px;
+    letter-spacing: 1px;
+  }
+
+  .item-name {
+    font-size: 13px;
+  }
+
+  .item-details {
+    font-size: 11px;
+  }
+
+  .item-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    margin-left: 0;
+    margin-top: 12px;
+  }
+
+  .item-actions .btn,
+  .form-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .form-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    margin-top: 24px;
+  }
+
+  .form-actions button {
+    width: 100%;
+  }
+
+  .template-input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .template-input-row .btn {
+    align-self: stretch;
+  }
+
+  .copy-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .copy-row .btn {
+    width: 100%;
+  }
+
+  .modal-content {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100vh;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .log-viewer {
+    max-height: none;
+  }
+
+  .secret-box {
+    font-size: 11px;
+    word-break: break-all;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .login-card {
+    padding: 24px 20px;
+  }
+
+  input, select, textarea {
+    font-size: 16px;
+  }
+
+  .status-dot,
+  .status-label {
+    font-size: 10px;
   }
 }
 
@@ -1081,6 +1238,45 @@ input[type="number"] {
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
   opacity: 1;
+}
+
+/* Select dropdown option lists: black popup, white text (the closed control
+   is already styled via .form-group rules) */
+select option {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* File inputs (key upload): native button forced into the black & white
+   palette so it matches the rest of the form */
+input[type="file"] {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+input[type="file"]::file-selector-button {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--white-10);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  margin-right: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+input[type="file"]::file-selector-button:hover {
+  background-color: var(--white-05);
+  border-color: var(--white-30);
+}
+
+input[type="file"]::file-selector-button:active {
+  background-color: var(--white-10);
 }
 
 input[type="checkbox"] {
@@ -1798,4 +1994,34 @@ textarea:focus {
 .settings-runtime {
   margin-top: 4px;
   padding-left: 4px;
+}
+
+.settings-about {
+  margin-top: 24px;
+}
+
+.settings-about h3 {
+  font-size: 14px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  margin: 0 0 20px;
+}
+
+.about-version {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.about-links .btn {
+  text-decoration: none;
 }

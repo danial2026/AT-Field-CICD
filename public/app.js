@@ -5,6 +5,8 @@ let appState = {
   profile: null,
   repos: [],
   scripts: [],
+  machines: [],
+  sshKeys: [],
   logs: [],
   audit: [],
   users: [],
@@ -173,6 +175,7 @@ async function boot() {
     const data = await apiCall('GET', '/api/auth/me', null, { silent: true });
     await minSplash;
     appState.user = data.user;
+    appState.settingsVersion = data.version;
     enterApp();
   } catch {
     await minSplash;
@@ -196,6 +199,7 @@ function enterApp() {
   switchTab('dashboard');
   loadRepos();
   loadScripts();
+  loadMachines();
   loadStats();
   loadNotifications();
   if (appState.isStaff) loadSettings();
@@ -256,6 +260,7 @@ async function handleLogout() {
 
 function switchTab(tab) {
   if (tab === 'audit' && !appState.isStaff) tab = 'repos';
+  if (tab === 'machines' && !appState.isStaff) tab = 'repos';
   if (tab === 'settings' && !appState.isStaff) tab = 'repos';
   if (tab === 'users' && !appState.isStaff) tab = 'repos';
 
@@ -275,6 +280,7 @@ function switchTab(tab) {
   else if (tab === 'notifications') loadNotifications();
   else if (tab === 'profile') loadProfile();
   else if (tab === 'audit') loadAudit();
+  else if (tab === 'machines') loadMachines();
   else if (tab === 'settings') loadSettings();
   else if (tab === 'users') loadUsers();
 }
@@ -288,7 +294,9 @@ function baseUrl() {
 
 async function loadSettings() {
   try {
-    appState.settings = (await apiCall('GET', '/api/settings', null, { loadingText: 'Loading settings…' })).settings;
+    const data = await apiCall('GET', '/api/settings', null, { loadingText: 'Loading settings…' });
+    appState.settings = data.settings;
+    appState.settingsVersion = data.version;
     fillSettingsForm();
   } catch (err) {
     showError(err.message);
@@ -305,6 +313,8 @@ function fillSettingsForm() {
   document.getElementById('settings-ssh-timeout').value = Math.round((s.ssh_timeout_ms || 1800000) / 60000);
   document.getElementById('settings-log-retention').value = s.log_retention_days || 0;
   document.getElementById('settings-maintenance').checked = !!s.maintenance_mode;
+  const verEl = document.getElementById('settings-version');
+  if (verEl) verEl.textContent = 'v' + (appState.settingsVersion || '—');
   updateSettingsRuntime();
 }
 
@@ -523,14 +533,27 @@ function renderActionsList() {
   }
 
   container.innerHTML = appState.actions.map(action => {
-    const typeLabel = action.type === 'script' ? 'Script' : `Deploy (${action.method})`;
-    const details = action.type === 'script'
-      ? `Script: ${action.script}`
-      : `${action.user}@${action.host}`;
-    const buttons = [];
-    if (appState.isStaff) {
-      buttons.push(`<button class="btn btn-small btn-primary" data-edit-action="${escapeHtml(action.keyword)}">Edit</button>`);
+    const machineNames = (action.machine_ids || [])
+      .map(id => {
+        const m = appState.machines.find(x => x.id === id);
+        return m ? m.name : `#${id} (deleted)`;
+      })
+      .join(', ');
+    const isCombined = Array.isArray(action.machine_ids) && action.machine_ids.length > 0;
+    const typeLabel = isCombined
+      ? `Deploy (${action.method})`
+      : 'Script';
+    const details = isCombined
+      ? `Machines: ${machineNames} · Script: ${action.script}`
+      : `Script: ${action.script} (runs on CI host)`;
+    const notifyIds = action.notification_target_ids || [];
+    let notifyLabel = '';
+    if (notifyIds.length) {
+      const targetMap = new Map((appState.notifications.targets || []).map(t => [t.id, t.name]));
+      notifyLabel = ' · notify: ' + notifyIds.map(id => targetMap.get(id) || `#${id}`).join(', ');
     }
+    const buttons = [];
+    buttons.push(`<button class="btn btn-small btn-primary" data-edit-action="${escapeHtml(action.keyword)}">Edit</button>`);
     buttons.push(`<button class="btn btn-small" data-run-action="${escapeHtml(action.keyword)}">Run Now</button>`);
     if (appState.isStaff) {
       buttons.push(`<button class="btn btn-small btn-danger" data-del-action="${escapeHtml(action.keyword)}">Delete</button>`);
@@ -539,7 +562,7 @@ function renderActionsList() {
       <div class="action-item">
         <div class="item-info">
           <div class="item-name">${escapeHtml(action.keyword)}</div>
-          <div class="item-details">${escapeHtml(details)}</div>
+          <div class="item-details">${escapeHtml(details + notifyLabel)}</div>
           <span class="action-type-badge ${action.type}">${escapeHtml(typeLabel)}</span>
         </div>
         <div class="item-actions">${buttons.join('')}</div>
@@ -668,18 +691,124 @@ const ACTION_SCRIPT_TEMPLATE = '#!/bin/bash\nset -e\n' +
   '# environment: CI_COMMIT_SHA, CI_KEYWORD, CI_REPO_SLUG, CI_TRIGGER\n';
 let actionScriptOriginal = '';
 
-function showFormFields(type) {
-  document.getElementById('script-fields').classList.toggle('hidden', type !== 'script');
-  document.getElementById('action-script-editor').classList.toggle('hidden', type !== 'script');
-  document.getElementById('deploy-fields').classList.toggle('hidden', type !== 'deploy');
-  if (type === 'script') {
-    const editor = document.getElementById('action-script-content');
-    editor.readOnly = !appState.isStaff;
-    document.getElementById('action-script-editor-hint').textContent = appState.isStaff
-      ? 'Template only — edit it to fit your build. Changes are saved to the script.'
-      : 'Read-only preview — only staff can edit script content.';
-    loadActionScriptEditor(document.getElementById('action-script').value);
+// Default notification message template (renders to the standard message).
+// Filled with {{...}} placeholders from the job result payload.
+const DEFAULT_NOTIFY_TEMPLATE = '{{message}}\nRepo: {{repo}}\nKeyword: {{keyword}}\nDuration: {{duration}}';
+
+let notificationTargetsLoaded = false;
+
+async function ensureNotificationTargets() {
+  if (notificationTargetsLoaded) return appState.notifications.targets;
+  try {
+    appState.notifications = await apiCall('GET', '/api/notifications', null, { silent: true });
+    notificationTargetsLoaded = true;
+  } catch {
+    appState.notifications.targets = [];
   }
+  return appState.notifications.targets;
+}
+
+function populateNotifyPicker(selectedIds = []) {
+  const container = document.getElementById('action-notify-picker');
+  if (!container) return;
+  const selected = new Set(selectedIds.map(Number));
+  const targets = appState.notifications.targets || [];
+  if (!targets.length) {
+    container.innerHTML = '<p class="empty-state">No notification targets yet — add one in the Notifications tab.</p>';
+    return;
+  }
+  container.innerHTML = targets.map(t => {
+    const disabled = !t.enabled;
+    return `
+      <label class="checkbox-label">
+        <input type="checkbox" class="notify-pick" value="${t.id}" ${selected.has(t.id) ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+        <span>${escapeHtml(t.name)}${disabled ? ' <span class="muted">(disabled)</span>' : ''}</span>
+      </label>
+    `;
+  }).join('');
+}
+
+function showDeployMethodFields(method) {
+  document.getElementById('rsync-fields').classList.toggle('hidden', method !== 'rsync');
+  document.getElementById('ssh-fields').classList.toggle('hidden', method !== 'ssh');
+}
+
+function updateActionModalPermissions() {
+  const editor = document.getElementById('action-script-content');
+  if (!editor) return;
+  editor.readOnly = !appState.isStaff;
+  document.getElementById('action-script-editor-hint').textContent = appState.isStaff
+    ? 'Template only — edit it to fit your build. Changes are saved to the script.'
+    : 'Read-only preview — only staff can edit script content.';
+}
+
+function populateMachinePicker(selectedIds = []) {
+  const container = document.getElementById('action-machines-picker');
+  const selected = new Set(selectedIds.map(Number));
+  if (!appState.machines.length) {
+    container.innerHTML = appState.isStaff
+      ? '<p class="empty-state">No deployment machines yet — add one in the Machines tab.</p>'
+      : '<p class="empty-state">No deployment machines available — ask DevOps to add one.</p>';
+    return;
+  }
+  container.innerHTML = appState.machines.map(m => `
+    <label class="checkbox-label">
+      <input type="checkbox" class="machine-pick" value="${m.id}" ${selected.has(m.id) ? 'checked' : ''}>
+      ${escapeHtml(m.name)} <span class="item-details">(${escapeHtml(m.ssh_user)}@${escapeHtml(m.host)})</span>
+    </label>
+  `).join('');
+}
+
+function resetActionForm() {
+  document.getElementById('action-keyword').disabled = false;
+  document.getElementById('action-form').reset();
+  showDeployMethodFields('');
+  populateMachinePicker();
+  populateNotifyPicker();
+  document.getElementById('action-notify-template').value = DEFAULT_NOTIFY_TEMPLATE;
+  document.getElementById('action-script-content').value = '';
+  actionScriptOriginal = '';
+  document.getElementById('action-modal-title').textContent = 'Add Action';
+  updateActionModalPermissions();
+  ensureNotificationTargets().then(() => populateNotifyPicker());
+}
+
+function populateScriptSelect(selected) {
+  const select = document.getElementById('action-script');
+  select.innerHTML = '<option value="">-- Select --</option>' +
+    appState.scripts.map(name =>
+      `<option value="${escapeHtml(name)}" ${name === selected ? 'selected' : ''}>${escapeHtml(name)}</option>`
+    ).join('');
+}
+
+function editAction(keyword) {
+  const action = appState.actions.find(a => a.keyword === keyword);
+  if (!action) return;
+
+  document.getElementById('action-keyword').value = keyword;
+  document.getElementById('action-keyword').disabled = true;
+
+  populateMachinePicker(action.machine_ids || []);
+  populateNotifyPicker(action.notification_target_ids || []);
+  document.getElementById('action-notify-template').value =
+    action.notification_template || DEFAULT_NOTIFY_TEMPLATE;
+  const method = action.method || '';
+  document.getElementById('deploy-method').value = method;
+  showDeployMethodFields(method);
+  if (method === 'rsync') {
+    document.getElementById('deploy-source').value = action.source || '';
+    document.getElementById('deploy-destination').value = action.destination || '';
+  } else if (method === 'ssh') {
+    document.getElementById('deploy-command').value = action.command || '';
+  }
+
+  populateScriptSelect(action.script);
+  loadActionScriptEditor(action.script || '');
+
+  document.getElementById('action-modal-title').textContent = 'Edit Action';
+  updateActionModalPermissions();
+  openModal('action-modal');
+  ensureNotificationTargets().then(() => populateNotifyPicker(action.notification_target_ids || []));
 }
 
 async function loadActionScriptEditor(scriptName) {
@@ -697,60 +826,6 @@ async function loadActionScriptEditor(scriptName) {
     actionScriptOriginal = ACTION_SCRIPT_TEMPLATE;
     editor.value = ACTION_SCRIPT_TEMPLATE;
   }
-}
-
-function showDeployMethodFields(method) {
-  document.getElementById('rsync-fields').classList.toggle('hidden', method !== 'rsync');
-  document.getElementById('ssh-fields').classList.toggle('hidden', method !== 'ssh');
-}
-
-function resetActionForm() {
-  document.getElementById('action-keyword').disabled = false;
-  document.getElementById('action-form').reset();
-  showFormFields('');
-  document.getElementById('action-script-content').value = '';
-  actionScriptOriginal = '';
-  document.getElementById('action-modal-title').textContent = 'Add Action';
-}
-
-function populateScriptSelect(selected) {
-  const select = document.getElementById('action-script');
-  select.innerHTML = '<option value="">-- Select --</option>' +
-    appState.scripts.map(name =>
-      `<option value="${escapeHtml(name)}" ${name === selected ? 'selected' : ''}>${escapeHtml(name)}</option>`
-    ).join('');
-}
-
-function editAction(keyword) {
-  const action = appState.actions.find(a => a.keyword === keyword);
-  if (!action) return;
-
-  document.getElementById('action-keyword').value = keyword;
-  document.getElementById('action-keyword').disabled = true;
-  document.getElementById('action-type').value = action.type;
-
-  if (action.type === 'script') {
-    populateScriptSelect(action.script);
-    showFormFields('script');
-    loadActionScriptEditor(action.script);
-  } else {
-    document.getElementById('deploy-method').value = action.method || '';
-    document.getElementById('deploy-user').value = action.user || '';
-    document.getElementById('deploy-host').value = action.host || '';
-    document.getElementById('deploy-ssh-key').value = action.sshKey || '';
-    document.getElementById('deploy-ssh-options').value = action.sshOptions || '';
-    if (action.method === 'rsync') {
-      document.getElementById('deploy-source').value = action.source || '';
-      document.getElementById('deploy-destination').value = action.destination || '';
-    } else {
-      document.getElementById('deploy-command').value = action.command || '';
-    }
-    showFormFields('deploy');
-    showDeployMethodFields(action.method);
-  }
-
-  document.getElementById('action-modal-title').textContent = 'Edit Action';
-  openModal('action-modal');
 }
 
 async function runActionNow(keyword) {
@@ -773,42 +848,48 @@ async function handleActionSubmit(e) {
   if (!appState.currentRepo) return;
 
   const keyword = document.getElementById('action-keyword').value.trim();
-  const type = document.getElementById('action-type').value;
-  if (!keyword || !type) return showError('Fill required fields');
+  if (!keyword) return showError('Fill required fields');
 
-  let action = { type };
+  const machineIds = Array.from(document.querySelectorAll('.machine-pick:checked')).map(cb => parseInt(cb.value, 10));
+  if (!machineIds.length) return showError('Select at least one deployment machine');
 
-  if (type === 'script') {
-    const script = document.getElementById('action-script').value.trim();
-    if (!script) return showError('Select a script');
-    action.script = script;
-    const content = document.getElementById('action-script-content').value;
-    if (content !== actionScriptOriginal) {
-      try {
-        await apiCall('POST', `/api/scripts/${encodeURIComponent(script.replace(/\.sh$/, ''))}`, { content }, { loadingText: 'Saving script template…' });
-        actionScriptOriginal = content;
-      } catch (err) {
-        return showError(`Script save failed: ${err.message}`);
-      }
+  const method = document.getElementById('deploy-method').value;
+  if (!method) return showError('Select a deploy method');
+
+  const script = document.getElementById('action-script').value.trim();
+  if (!script) return showError('Select a script');
+
+  const action = {
+    type: 'deploy',
+    machine_ids: machineIds,
+    method,
+    script,
+  };
+
+  const notifyIds = Array.from(document.querySelectorAll('.notify-pick:checked')).map(cb => parseInt(cb.value, 10));
+  const notifyTemplate = document.getElementById('action-notify-template').value;
+  if (notifyIds.length) action.notification_target_ids = notifyIds;
+  if (notifyTemplate.trim() && notifyTemplate.trim() !== DEFAULT_NOTIFY_TEMPLATE) {
+    action.notification_template = notifyTemplate.trim();
+  }
+
+  const content = document.getElementById('action-script-content').value;
+  if (content !== actionScriptOriginal) {
+    try {
+      await apiCall('POST', `/api/scripts/${encodeURIComponent(script.replace(/\.sh$/, ''))}`, { content }, { loadingText: 'Saving script template…' });
+      actionScriptOriginal = content;
+    } catch (err) {
+      return showError(`Script save failed: ${err.message}`);
     }
+  }
+
+  if (method === 'rsync') {
+    action.source = document.getElementById('deploy-source').value.trim();
+    action.destination = document.getElementById('deploy-destination').value.trim();
+    if (!action.source || !action.destination) return showError('rsync needs source + destination');
   } else {
-    const method = document.getElementById('deploy-method').value;
-    const user = document.getElementById('deploy-user').value.trim();
-    const host = document.getElementById('deploy-host').value.trim();
-    if (!method || !user || !host) return showError('Fill deploy fields');
-    action.method = method;
-    action.user = user;
-    action.host = host;
-    action.sshKey = document.getElementById('deploy-ssh-key').value.trim() || undefined;
-    action.sshOptions = document.getElementById('deploy-ssh-options').value.trim() || undefined;
-    if (method === 'rsync') {
-      action.source = document.getElementById('deploy-source').value.trim();
-      action.destination = document.getElementById('deploy-destination').value.trim();
-      if (!action.source || !action.destination) return showError('rsync needs source + destination');
-    } else {
-      action.command = document.getElementById('deploy-command').value.trim();
-      if (!action.command) return showError('SSH needs command');
-    }
+    action.command = document.getElementById('deploy-command').value.trim();
+    if (!action.command) return showError('SSH needs command');
   }
 
   try {
@@ -915,6 +996,139 @@ async function handleScriptSubmit(e) {
   }
 }
 
+// DEPLOYMENT MACHINES
+
+async function loadMachines() {
+  try {
+    const [machines, keys] = await Promise.all([
+      apiCall('GET', '/api/machines', null, { loadingText: 'Loading machines…' }),
+      apiCall('GET', '/api/sshkeys', null, { loadingText: 'Loading keys…' }).catch(() => []),
+    ]);
+    appState.machines = machines;
+    appState.sshKeys = keys;
+    renderMachinesList();
+    renderSshKeysList();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+function renderMachinesList() {
+  const container = document.getElementById('machines-list');
+  if (!container) return;
+  if (!appState.machines.length) {
+    container.innerHTML = '<p class="empty-state">No deployment machines yet. Add one — actions deploy to these machines and run their scripts on them.</p>';
+    return;
+  }
+  container.innerHTML = appState.machines.map(m => {
+    const portLabel = m.port && Number(m.port) !== 22 ? `:${m.port}` : '';
+    return `
+    <div class="action-item">
+      <div class="item-info">
+        <div class="item-name">${escapeHtml(m.name)}</div>
+        <div class="item-details">
+          ${escapeHtml(m.ssh_user)}@${escapeHtml(m.host)}${portLabel}${m.ssh_key ? ' · key: ' + escapeHtml(m.ssh_key) : ''}
+        </div>
+        <span class="action-type-badge deploy">machine</span>
+      </div>
+      <div class="item-actions">
+        <button class="btn btn-small btn-primary" data-edit-machine="${m.id}">Edit</button>
+        <button class="btn btn-small btn-danger" data-del-machine="${m.id}">Delete</button>
+      </div>
+    </div>
+  `;
+  }).join('');
+
+  container.querySelectorAll('[data-edit-machine]').forEach(btn => {
+    btn.addEventListener('click', () => editMachine(parseInt(btn.dataset.editMachine, 10)));
+  });
+  container.querySelectorAll('[data-del-machine]').forEach(btn => {
+    btn.addEventListener('click', () => confirmDelete('machine', btn.dataset.delMachine));
+  });
+}
+
+function renderSshKeysList() {
+  const container = document.getElementById('ssh-keys-list');
+  if (!container) return;
+  if (!appState.sshKeys.length) {
+    container.innerHTML = '<p class="empty-state">No SSH keys uploaded yet. Upload a private key so machines can authenticate.</p>';
+    return;
+  }
+  container.innerHTML = appState.sshKeys.map(k => `
+    <div class="action-item">
+      <div class="item-info">
+        <div class="item-name">${escapeHtml(k.name)}</div>
+        <div class="item-details">
+          ${escapeHtml(k.fingerprint)}${k.machine_uses ? ' · in use by ' + k.machine_uses + ' machine(s)' : ''}
+        </div>
+        <span class="action-type-badge deploy">ssh key</span>
+      </div>
+      <div class="item-actions">
+        <button class="btn btn-small btn-danger" data-del-key="${k.id}">Delete</button>
+      </div>
+    </div>
+  `).join('');
+
+  container.querySelectorAll('[data-del-key]').forEach(btn => {
+    btn.addEventListener('click', () => confirmDelete('sshkey', btn.dataset.delKey));
+  });
+}
+
+function populateKeySelect() {
+  const select = document.getElementById('machine-ssh-key');
+  if (!select) return;
+  select.innerHTML = '<option value="">Default (no key)</option>' +
+    appState.sshKeys.map(k => `<option value="${escapeHtml(k.name)}">${escapeHtml(k.name)}</option>`).join('');
+}
+
+function resetMachineForm() {
+  document.getElementById('machine-form').reset();
+  document.getElementById('machine-edit-id').value = '';
+  document.getElementById('machine-modal-title').textContent = 'Add Deployment Machine';
+  populateKeySelect();
+}
+
+function editMachine(id) {
+  const m = appState.machines.find(x => x.id === id);
+  if (!m) return;
+  populateKeySelect();
+  document.getElementById('machine-edit-id').value = String(m.id);
+  document.getElementById('machine-name').value = m.name;
+  document.getElementById('machine-user').value = m.ssh_user;
+  document.getElementById('machine-host').value = m.host;
+  document.getElementById('machine-port').value = m.port || 22;
+  document.getElementById('machine-ssh-key').value = m.ssh_key || '';
+  document.getElementById('machine-ssh-options').value = m.ssh_options || '';
+  document.getElementById('machine-modal-title').textContent = `Edit: ${m.name}`;
+  openModal('machine-modal');
+}
+
+async function handleMachineSubmit(e) {
+  e.preventDefault();
+  const id = document.getElementById('machine-edit-id').value;
+  const payload = {
+    name: document.getElementById('machine-name').value.trim(),
+    ssh_user: document.getElementById('machine-user').value.trim(),
+    host: document.getElementById('machine-host').value.trim(),
+    port: parseInt(document.getElementById('machine-port').value, 10) || 22,
+    ssh_key: document.getElementById('machine-ssh-key').value,
+    ssh_options: document.getElementById('machine-ssh-options').value.trim(),
+  };
+  try {
+    if (id) {
+      await apiCall('PATCH', `/api/machines/${id}`, payload, { loadingText: 'Saving machine…' });
+    } else {
+      await apiCall('POST', '/api/machines', payload, { loadingText: 'Creating machine…' });
+    }
+    closeAllModals();
+    resetMachineForm();
+    await loadMachines();
+    showSuccess('Machine saved');
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
 // LOGS
 
 async function loadLogs() {
@@ -980,6 +1194,8 @@ async function loadProfile() {
     document.getElementById('profile-created').textContent = p.created_at
       ? new Date(p.created_at).toLocaleString()
       : '—';
+    const verEl = document.getElementById('settings-version');
+    if (verEl) verEl.textContent = 'v' + (appState.settingsVersion || '—');
   } catch (err) {
     showError(err.message);
   }
@@ -1032,8 +1248,8 @@ function fmtNum(n) {
   return n == null ? '0' : String(n);
 }
 
-function svgWrap(inner, w, h) {
-  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">${inner}</svg>`;
+function svgWrap(inner, w, h, par = 'none') {
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="${par}">${inner}</svg>`;
 }
 
 async function loadStats() {
@@ -1141,7 +1357,7 @@ function renderStats() {
   const triggerRows = (by_trigger || []).map(t => `
     <div class="hbars-mini"><span>${escapeHtml(t.trigger)}</span><b>${fmtNum(t.total)}</b></div>`).join('');
   document.getElementById('chart-types').innerHTML = `
-    ${by_type.length ? svgWrap(donutSegs, 80, 80) : '<p class="empty-state">No runs yet</p>'}
+    ${by_type.length ? svgWrap(donutSegs, 80, 80, 'xMidYMid meet') : '<p class="empty-state">No runs yet</p>'}
     <div class="legend-mini">
       ${by_type.map(t => `<span><i style="background:${colors[t.type] || '#4CC9F0'}"></i>${escapeHtml(t.type)} (${fmtNum(t.total)})</span>`).join('')}
     </div>
@@ -1265,7 +1481,7 @@ function notifFormFromConfig(type, config = {}) {
     }
   }
   const tpl = document.getElementById('notification-message-template');
-  if (tpl) tpl.value = config.message_template || '';
+  if (tpl) tpl.value = config.message_template || DEFAULT_NOTIFY_TEMPLATE;
 }
 
 function showNotifFields(type) {
@@ -1293,7 +1509,7 @@ function resetNotificationForm() {
   document.getElementById('notification-edit-id').value = '';
   document.getElementById('notification-modal-title').textContent = 'Add Notification Target';
   document.getElementById('notification-enabled').checked = true;
-  document.getElementById('notification-message-template').value = '';
+  document.getElementById('notification-message-template').value = DEFAULT_NOTIFY_TEMPLATE;
   document.querySelectorAll('.notif-event').forEach(cb => {
     cb.checked = ['job_failure', 'job_timeout', 'poll_error'].includes(cb.value);
   });
@@ -1303,6 +1519,7 @@ function resetNotificationForm() {
 async function loadNotifications() {
   try {
     appState.notifications = await apiCall('GET', '/api/notifications', null, { loadingText: 'Loading notifications…' });
+    notificationTargetsLoaded = true;
     renderNotifications();
   } catch (err) {
     showError(err.message);
@@ -1598,6 +1815,12 @@ async function handleConfirmDelete() {
     } else if (type === 'notification') {
       await apiCall('DELETE', `/api/notifications/${name}`, null, { loadingText: 'Deleting…' });
       loadNotifications();
+    } else if (type === 'machine') {
+      await apiCall('DELETE', `/api/machines/${name}`, null, { loadingText: 'Deleting…' });
+      loadMachines();
+    } else if (type === 'sshkey') {
+      await apiCall('DELETE', `/api/sshkeys/${name}`, null, { loadingText: 'Deleting…' });
+      loadMachines();
     }
     closeAllModals();
     showSuccess('Deleted');
@@ -1706,6 +1929,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (modalId === 'repo-modal') resetRepoForm();
       if (modalId === 'user-modal') resetUserForm();
       if (modalId === 'notification-modal') resetNotificationForm();
+      if (modalId === 'machine-modal') resetMachineForm();
     });
   });
 
@@ -1718,6 +1942,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (modal.id === 'repo-modal') resetRepoForm();
         if (modal.id === 'user-modal') resetUserForm();
         if (modal.id === 'notification-modal') resetNotificationForm();
+        if (modal.id === 'machine-modal') resetMachineForm();
       }
     });
   });
@@ -1734,10 +1959,6 @@ document.addEventListener('DOMContentLoaded', () => {
     populateScriptSelect();
     openModal('action-modal');
   });
-  document.getElementById('action-type').addEventListener('change', (e) => {
-    showFormFields(e.target.value);
-    if (e.target.value === 'script') populateScriptSelect();
-  });
   document.getElementById('action-script').addEventListener('change', (e) => {
     loadActionScriptEditor(e.target.value);
   });
@@ -1745,6 +1966,31 @@ document.addEventListener('DOMContentLoaded', () => {
     showDeployMethodFields(e.target.value);
   });
   document.getElementById('action-form').addEventListener('submit', handleActionSubmit);
+
+  document.getElementById('add-machine-btn').addEventListener('click', () => {
+    resetMachineForm();
+    openModal('machine-modal');
+  });
+  document.getElementById('add-key-btn').addEventListener('click', () => {
+    document.getElementById('key-form').reset();
+    openModal('key-modal');
+  });
+  document.getElementById('key-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = document.getElementById('key-name').value.trim();
+    const file = document.getElementById('key-file').files[0];
+    if (!name || !file) return showError('Name and key file are required');
+    try {
+      const content = await file.text();
+      await apiCall('POST', '/api/sshkeys', { name, content }, { loadingText: 'Uploading key…' });
+      closeAllModals();
+      await loadMachines();
+      showSuccess('SSH key uploaded');
+    } catch (err) {
+      showError(err.message);
+    }
+  });
+  document.getElementById('machine-form').addEventListener('submit', handleMachineSubmit);
 
   document.getElementById('create-script-btn').addEventListener('click', () => {
     resetScriptForm();
@@ -1766,6 +2012,12 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('add-notification-btn').addEventListener('click', () => {
     resetNotificationForm();
     openModal('notification-modal');
+  });
+  document.getElementById('notification-template-reset').addEventListener('click', () => {
+    document.getElementById('notification-message-template').value = DEFAULT_NOTIFY_TEMPLATE;
+  });
+  document.getElementById('action-notify-template-reset').addEventListener('click', () => {
+    document.getElementById('action-notify-template').value = DEFAULT_NOTIFY_TEMPLATE;
   });
   document.getElementById('notification-type').addEventListener('change', (e) => {
     showNotifFields(e.target.value);

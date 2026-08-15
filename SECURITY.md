@@ -20,16 +20,20 @@ the security controls in place and what you must do to deploy it safely.
 | Role | Can view | Can mutate CI/CD resources |
 |------|----------|----------------------------|
 | `admin` | Everything | Everything + user management |
-| `devops` | Everything | Repos, actions, scripts, secrets |
-| `developer` | repos, scripts, logs, status | Own profile only |
+| `devops` | Everything | Repos, actions, scripts, secrets, machines (manage) |
+| `developer` | repos, scripts, logs, status, machines (list for selection) | Actions (create/edit/run), own profile only |
 
 All `/api/*` routes (except `/api/auth/login`, `/api/auth/me`) require a valid session.
 Mutation routes use `requireStaff` (admin/devops) or `requireAdminUser` (user management).
+Action create/edit (`PUT .../actions/:keyword`) and manual runs are open to all
+authenticated users (action **deletion** stays staff-only); deployment-machine CRUD is
+staff-only, though every user may list machines to pick deployment targets.
 The bootstrap `admin` user cannot be deleted or demoted, and no user can delete/demote
 themselves.
 
-The dashboard mirrors this model in the UI: **Audit**, **Settings**, and **Users**
-tabs are hidden from `developer` accounts, and shown to both `admin` and `devops`.
+The dashboard mirrors this model in the UI: **Audit**, **Settings**, **Machines**,
+and **Users** tabs are hidden from `developer` accounts, and shown to both
+`admin` and `devops`.
 Tab visibility is presentation-only — every protected API remains server-enforced
 (user-management endpoints stay admin-only regardless of the tab being visible).
 
@@ -51,16 +55,22 @@ Staff can reveal it via `POST /api/repos/:id/reveal-secret` - every reveal is au
 ## Secret Storage
 
 - Webhook secrets and git tokens are stored in the SQLite database file (`data/at-field-ci.db`).
+- Uploaded SSH keys are additionally encrypted at rest (AES-256-GCM, see "SSH Key
+  Management" below).
 - API responses expose only a masked hint (`••••abcd`) and only to staff.
 - Protect the DB file with filesystem permissions (`600` where possible) and encrypt
   the volume at rest in production. Do not commit `data/` (already in `.gitignore`).
 
 ## Command & Path Safety
 
-- **Scripts** run via `spawn('bash', [scriptPath])` with an **args array** - never
-  `shell: true`, never string interpolation of user input.
-- **SSH/rsync** deploys use `spawn()` with array args. Host and user are validated
-  against `/^[a-zA-Z0-9._:-]+$/` and `/^[a-zA-Z0-9._-]+$/` before use.
+- **Action scripts** run locally via `spawn('bash', [scriptPath])` with an **args
+  array** - never `shell: true`, never string interpolation of user input - and are
+  additionally streamed to each deployment machine over SSH (`ssh … bash -s`, run
+  from `cd /tmp`). Script content goes over the SSH channel, never through a shell
+  string; exported `CI_*` env values are single-quote-escaped.
+- **SSH/rsync deploys** use `spawn()` with array args. Machine host and user are
+  validated against `/^[a-zA-Z0-9._:-]+$/` and `/^[a-zA-Z0-9._-]+$/` when a machine
+  is registered, and re-validated in the job runner before every connection.
 - **Script names** are validated (alnum + `_`/`-`, no `..` or `/`), and resolved
   paths are checked to be within `scripts/`.
 - **Log files** are sandboxed in `logs/`; filenames with `..`, `/`, or `\` are rejected.
@@ -132,15 +142,21 @@ content is rendered via `textContent`.
 
 ## SSH Key Management
 
-```bash
-ssh-keygen -t ed25519 -N "" -f ssh/id_rsa -C "at-field-ci"
-ssh-copy-id -i ssh/id_rsa.pub deployer@prod.example.com
-ssh-keyscan prod.example.com >> ssh/known_hosts
-chmod 600 ssh/id_rsa
-chmod 644 ssh/known_hosts
-```
+Private keys are uploaded through the **Machines** tab (staff only) and referenced
+by machines by name. The key content never leaves the API as plaintext:
 
-Rotate keys every 90 days. Keys are never logged.
+- Uploaded keys are checked to contain a private-key header (`PRIVATE KEY`),
+  capped at 16 KB, and stored **AES-256-GCM encrypted at rest** in `ssh_keys`.
+- The encryption master key is `MASTER_KEY` (64 hex chars) if set, otherwise an
+  auto-generated `data/master.key` file (mode `600`). **Back up `master.key`
+  together with the DB** — losing it makes stored keys undecryptable.
+- During a job run the key is decrypted to a temporary `0600` file under the OS
+  temp dir for that machine's deploy + script only, then deleted. Keys are never
+  logged and never returned by any API.
+
+Machines also have an **SSH port** (default 22) applied to `ssh`/`rsync`
+connections. Host keys should still be pinned via `ssh_options`
+(e.g. `-o StrictHostKeyChecking=accept-new` with a known_hosts file).
 
 ## What AT FIELD CICD does NOT protect against
 

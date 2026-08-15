@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const db = require('./lib/db');
 const poller = require('./lib/poller');
 const notify = require('./lib/notify');
+const APP_VERSION = require('./package.json').version || '0.0.0';
 
 console.log(`
    █████████   ███████████    ███████████  ███           ████      █████      █████████  █████
@@ -56,6 +57,56 @@ function getSettings() {
 function getSetting(key) {
   const v = db.getSetting(key);
   return v === undefined ? SETTINGS_DEFAULTS[key] : v;
+}
+
+// Encryption-at-rest for SSH keys uploaded via the dashboard.
+// Master key: MASTER_KEY env (64 hex chars) or auto-generated data/master.key.
+
+const DATA_DIR = path.join(__dirname, 'data');
+const MASTER_KEY_FILE = process.env.MASTER_KEY_FILE || path.join(DATA_DIR, 'master.key');
+
+let cachedMasterKey = null;
+
+function getMasterKey() {
+  if (cachedMasterKey) return cachedMasterKey;
+  if (process.env.MASTER_KEY) {
+    const hex = String(process.env.MASTER_KEY).replace(/^0x/i, '').trim();
+    if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+      throw new Error('MASTER_KEY must be 64 hex chars (32 bytes)');
+    }
+    cachedMasterKey = Buffer.from(hex, 'hex');
+  } else {
+    if (!fs.existsSync(MASTER_KEY_FILE)) {
+      fs.mkdirSync(path.dirname(MASTER_KEY_FILE), { recursive: true });
+      fs.writeFileSync(MASTER_KEY_FILE, crypto.randomBytes(32).toString('hex') + '\n', { mode: 0o600 });
+    }
+    cachedMasterKey = crypto.createHash('sha256').update(fs.readFileSync(MASTER_KEY_FILE, 'utf8').trim()).digest();
+  }
+  return cachedMasterKey;
+}
+
+function encryptSecret(plain) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', getMasterKey(), iv);
+  const ct = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return 'enc:' + Buffer.concat([iv, tag, ct]).toString('base64');
+}
+
+function decryptSecret(blob) {
+  if (typeof blob !== 'string' || !blob.startsWith('enc:')) return null;
+  try {
+    const buf = Buffer.from(blob.slice(4), 'base64');
+    if (buf.length < 12 + 16) return null;
+    const iv = buf.subarray(0, 12);
+    const tag = buf.subarray(12, 28);
+    const ct = buf.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getMasterKey(), iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
 }
 
 function maintenanceMode() {
@@ -314,6 +365,64 @@ function notifyPollError(repo, error) {
       event: 'poll_error',
     }).catch(err => console.warn('[NOTIFY] poll_error', err.message));
   }
+}
+
+// Send job notifications to the targets explicitly selected on an action.
+// Independent of each target's "Notify on events" subscriptions - any target
+// that is simply *enabled* receives the action-linked notification.
+async function sendActionNotifications(job, extra = {}) {
+  const action = job.action || {};
+  const ids = Array.isArray(action.notification_target_ids) ? action.notification_target_ids : [];
+  if (!ids.length) return { sent: 0 };
+  const ownerId = action.user_id;
+  if (!ownerId) return { sent: 0 };
+
+  const targets = ids
+    .map(id => db.getNotification(id, ownerId))
+    .filter(Boolean)
+    .filter(t => t.enabled);
+  if (!targets.length) return { sent: 0 };
+
+  const status = extra.status || 'success';
+  const repo = job.repo_id ? db.getRepoById(job.repo_id) : null;
+  const message = [
+    `Job ${status}`,
+    job.repo ? `Repo: ${job.repo}` : null,
+    job.name ? `Keyword: ${job.name}` : null,
+    extra.duration ? `Duration: ${extra.duration}` : null,
+  ].filter(Boolean).join('\n');
+
+  const payload = {
+    title: `${job.name} ${status}`,
+    message,
+    ok: status === 'success',
+    event: 'action_notify',
+    repo: job.repo,
+    repo_slug: repo ? repo.slug : null,
+    keyword: job.name,
+    type: job.type || null,
+    commit: job.commit || null,
+    trigger: job.trigger || null,
+    status,
+    ...extra,
+  };
+
+  let sent = 0;
+  const results = await Promise.allSettled(targets.map(async target => {
+    const t = { ...target, config: { ...(target.config || {}) } };
+    if (action.notification_template) {
+      delete t.message_template;
+      t.config.message_template = action.notification_template;
+    }
+    await notify.send(t, payload);
+    sent += 1;
+  }));
+
+  const failed = results.filter(r => r.status === 'rejected');
+  if (failed.length) {
+    console.warn('[NOTIFY] action-linked failed targets:', failed.map(r => r.reason?.message || 'error').join('; '));
+  }
+  return { sent, failed: failed.length };
 }
 
 // JOB RUN TRACKING
@@ -790,9 +899,10 @@ function runJob(job, callback) {
     if (err && err.signal) status = 'timeout';
     else if (err) status = 'fail';
     db.recordJobFinish(runId, { status, durationMs, exitCode: err?.code ?? null });
-    notifyAllUsers(status === 'success' ? 'job_success' : status === 'timeout' ? 'job_timeout' : 'job_failure', job, {
-      duration: `${(durationMs / 1000).toFixed(1)}s`,
-    });
+    const extra = { duration: `${(durationMs / 1000).toFixed(1)}s` };
+    notifyAllUsers(status === 'success' ? 'job_success' : status === 'timeout' ? 'job_timeout' : 'job_failure', job, extra);
+    sendActionNotifications(job, { ...extra, status })
+      .catch(e => console.warn('[NOTIFY] action-linked error:', e.message));
     callback(err);
   };
 
@@ -894,49 +1004,147 @@ function runScriptJob(job, logPath, callback) {
 }
 
 function runDeployJob(job, logPath, callback) {
-  const method = job.action.method || 'ssh';
-  if (method === 'rsync') runRsyncDeploy(job.action, logPath, callback);
-  else if (method === 'ssh') runSshDeploy(job.action, logPath, callback);
-  else {
+  const action = job.action || {};
+  const method = action.method || 'ssh';
+  if (method !== 'rsync' && method !== 'ssh') {
     writeToLog(logPath, `[ERROR] Unknown deploy method: ${method}\n`);
-    callback(new Error('Unknown deploy method'));
+    return callback(new Error('Unknown deploy method'));
+  }
+
+  const machineIds = Array.isArray(action.machine_ids) ? action.machine_ids : [];
+  if (!machineIds.length) {
+    writeToLog(logPath, '[ERROR] No deployment machine configured for this action\n');
+    return callback(new Error('No deployment machine configured'));
+  }
+
+  const machines = db.getDeployMachinesByIds(machineIds);
+  const missing = machineIds.filter(id => !machines.some(m => m.id === id));
+  if (missing.length) {
+    writeToLog(logPath, `[ERROR] Deployment machine(s) not found: ${missing.join(', ')}\n`);
+    return callback(new Error(`Deployment machine(s) not found: ${missing.join(', ')}`));
+  }
+
+  if (!action.script) {
+    writeToLog(logPath, '[ERROR] No script configured for this action\n');
+    return callback(new Error('No script configured'));
+  }
+
+  const scriptName = normalizeScriptPath(action.script);
+  if (!scriptName) {
+    writeToLog(logPath, '[ERROR] Invalid script name\n');
+    return callback(new Error('Invalid script name'));
+  }
+  const scriptPath = path.join(SCRIPTS_DIR, scriptName);
+  if (!fs.existsSync(scriptPath)) {
+    writeToLog(logPath, `[ERROR] Script not found: ${scriptName}\n`);
+    return callback(new Error('Script not found'));
+  }
+
+  let i = 0;
+  const nextMachine = (err) => {
+    if (err) return callback(err);
+    if (i >= machines.length) return callback(null);
+    const machine = machines[i++];
+
+    const key = materializeSshKey(machine);
+    if (key.error) {
+      writeToLog(logPath, `[ERROR] ${key.error}\n`);
+      return callback(new Error(key.error));
+    }
+    const portLabel = machine.port && Number(machine.port) !== 22 ? `:${machine.port}` : '';
+    writeToLog(logPath, `[DEPLOY] Machine ${machine.name} (${machine.ssh_user}@${machine.host}${portLabel})\n`);
+
+    const machineCtx = { action, machine: { ...machine, keyPath: key.path }, logPath };
+    const done = (machineErr) => {
+      if (key.cleanup) {
+        try { key.cleanup(); } catch { /* best effort */ }
+      }
+      nextMachine(machineErr);
+    };
+    const afterDeploy = (deployErr) => {
+      if (deployErr) return done(deployErr);
+      runRemoteScript(machineCtx, scriptPath, scriptName, job, done);
+    };
+    if (method === 'rsync') runRsyncDeploy(machineCtx, afterDeploy);
+    else runSshDeploy(machineCtx, afterDeploy);
+  };
+  nextMachine(null);
+}
+
+// Resolve a machine's stored ssh_key name to a decrypted temp key file.
+// The temp file lives only for the duration of that machine's deploy+script.
+function materializeSshKey(machine) {
+  if (!machine.ssh_key) return { path: null };
+  const row = db.getSshKeyByName(machine.ssh_key);
+  if (!row || !row.key_data) {
+    return { error: `SSH key not found: ${machine.ssh_key}` };
+  }
+  const content = decryptSecret(row.key_data);
+  if (content === null) {
+    return { error: `SSH key "${machine.ssh_key}" could not be decrypted (wrong master key?)` };
+  }
+  try {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'at-field-key-'));
+    const file = path.join(dir, 'key');
+    fs.writeFileSync(file, content.endsWith('\n') ? content : content + '\n', { mode: 0o600 });
+    return { path: file, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+  } catch (e) {
+    return { error: `Cannot materialize SSH key: ${e.message}` };
   }
 }
 
-function runRsyncDeploy(action, logPath, callback) {
-  const { source, destination, user, host, sshKey, sshOptions } = action;
-  if (!source || !destination || !user || !host) {
+function buildSshArgs(machine, extra) {
+  const args = [];
+  if (machine.keyPath) args.push('-i', machine.keyPath);
+  if (machine.port && Number(machine.port) !== 22) args.push('-p', String(machine.port));
+  if (machine.ssh_options) args.push(...String(machine.ssh_options).split(/\s+/).filter(Boolean));
+  args.push(...extra);
+  return args;
+}
+
+function machineHostCheck(machine, logPath) {
+  const { host, ssh_user } = machine;
+  if (typeof host !== 'string' || !/^[a-zA-Z0-9._:-]+$/.test(host)) {
+    writeToLog(logPath, `[ERROR] Invalid host: ${host}\n`);
+    return 'Invalid host';
+  }
+  if (typeof ssh_user !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(ssh_user)) {
+    writeToLog(logPath, `[ERROR] Invalid user: ${ssh_user}\n`);
+    return 'Invalid user';
+  }
+  return null;
+}
+
+function runRsyncDeploy({ action, machine, logPath }, callback) {
+  const { source, destination } = action;
+  if (!source || !destination) {
     writeToLog(logPath, '[ERROR] Missing rsync params\n');
     return callback(new Error('Missing required parameters'));
   }
+  const err = machineHostCheck(machine, logPath);
+  if (err) return callback(new Error(err));
 
   const sourcePath = path.resolve(path.join(__dirname, source));
   if (!sourcePath.startsWith(path.resolve(__dirname) + path.sep) && sourcePath !== path.resolve(__dirname)) {
     writeToLog(logPath, '[ERROR] Source path traversal\n');
     return callback(new Error('Path traversal blocked'));
   }
-
-  if (typeof host !== 'string' || !/^[a-zA-Z0-9._:-]+$/.test(host)) {
-    writeToLog(logPath, '[ERROR] Invalid host\n');
-    return callback(new Error('Invalid host'));
-  }
-  if (typeof user !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(user)) {
-    writeToLog(logPath, '[ERROR] Invalid user\n');
-    return callback(new Error('Invalid user'));
+  if (!fs.existsSync(sourcePath)) {
+    writeToLog(logPath, `[ERROR] Source not found: ${sourcePath}\n`);
+    return callback(new Error('Source not found'));
   }
 
   const args = ['-av'];
-  if (sshKey || sshOptions) {
-    let sshCmd = 'ssh';
-    if (sshKey) {
-      const escapedKey = String(sshKey).replace(/'/g, "'\\''");
-      sshCmd += ` -i '${escapedKey}'`;
-    }
-    if (sshOptions) sshCmd += ` ${sshOptions}`;
-    args.push('-e', sshCmd);
+  if (machine.keyPath || machine.ssh_options || (machine.port && Number(machine.port) !== 22)) {
+    const sshCmdParts = ['ssh'];
+    if (machine.keyPath) sshCmdParts.push('-i', `'${String(machine.keyPath).replace(/'/g, "'\\''")}'`);
+    if (machine.port && Number(machine.port) !== 22) sshCmdParts.push('-p', String(machine.port));
+    if (machine.ssh_options) sshCmdParts.push(machine.ssh_options);
+    args.push('-e', sshCmdParts.join(' '));
   }
-  args.push(sourcePath, `${user}@${host}:${destination}`);
+  args.push(sourcePath, `${machine.ssh_user}@${machine.host}:${destination}`);
 
+  writeToLog(logPath, `[RSYNC] ${sourcePath} -> ${machine.ssh_user}@${machine.host}:${destination}\n`);
   const child = spawn('rsync', args, { timeout: getSetting('rsync_timeout_ms') });
   child.stdout.on('data', d => writeToLog(logPath, d.toString('utf8')));
   child.stderr.on('data', d => writeToLog(logPath, '[STDERR] ' + d.toString('utf8')));
@@ -954,25 +1162,17 @@ function runRsyncDeploy(action, logPath, callback) {
   });
 }
 
-function runSshDeploy(action, logPath, callback) {
-  const { command, user, host, sshKey, sshOptions } = action;
-  if (!command || !user || !host) {
-    writeToLog(logPath, '[ERROR] Missing SSH params\n');
+function runSshDeploy({ action, machine, logPath }, callback) {
+  const { command } = action;
+  if (!command) {
+    writeToLog(logPath, '[ERROR] Missing SSH command\n');
     return callback(new Error('Missing required parameters'));
   }
-  if (typeof host !== 'string' || !/^[a-zA-Z0-9._:-]+$/.test(host)) {
-    writeToLog(logPath, '[ERROR] Invalid host\n');
-    return callback(new Error('Invalid host'));
-  }
-  if (typeof user !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(user)) {
-    writeToLog(logPath, '[ERROR] Invalid user\n');
-    return callback(new Error('Invalid user'));
-  }
+  const err = machineHostCheck(machine, logPath);
+  if (err) return callback(new Error(err));
 
-  const args = [];
-  if (sshKey) args.push('-i', sshKey);
-  if (sshOptions) args.push(...String(sshOptions).split(/\s+/).filter(Boolean));
-  args.push(`${user}@${host}`, command);
+  const args = buildSshArgs(machine, [`${machine.ssh_user}@${machine.host}`, command]);
+  writeToLog(logPath, `[SSH] ${machine.ssh_user}@${machine.host}: ${command}\n`);
 
   const child = spawn('ssh', args, { timeout: getSetting('ssh_timeout_ms') });
   child.stdout.on('data', d => writeToLog(logPath, d.toString('utf8')));
@@ -991,44 +1191,104 @@ function runSshDeploy(action, logPath, callback) {
   });
 }
 
+// Run the action script ON the deployment machine by streaming it over SSH.
+function runRemoteScript({ action, machine, logPath }, scriptPath, scriptName, job, callback) {
+  const err = machineHostCheck(machine, logPath);
+  if (err) return callback(new Error(err));
+
+  let content;
+  try {
+    content = fs.readFileSync(scriptPath, 'utf8');
+  } catch (e) {
+    writeToLog(logPath, `[ERROR] Cannot read script: ${e.message}\n`);
+    return callback(e);
+  }
+
+  const env = buildJobEnv(job);
+  const exports = [];
+  for (const key of ['CI_KEYWORD', 'CI_REPO', 'CI_COMMIT', 'CI_PROVIDER', 'CI_GIT_USER', 'CI_GIT_TOKEN', 'CI_CLONE_AUTH_URL']) {
+    if (env[key] !== undefined && env[key] !== '') {
+      exports.push(`export ${key}='${String(env[key]).replace(/'/g, "'\\''")}';`);
+    }
+  }
+  const remoteCmd = `${exports.join('')} cd /tmp && bash -s`;
+  writeToLog(logPath, `[SCRIPT] streaming ${scriptName} to ${machine.ssh_user}@${machine.host} and running it there\n`);
+
+  const args = buildSshArgs(machine, [`${machine.ssh_user}@${machine.host}`, remoteCmd]);
+  const child = spawn('ssh', args, {
+    timeout: getSetting('script_timeout_ms'),
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  child.stdin.write(content);
+  child.stdin.end();
+  child.stdout.on('data', d => writeToLog(logPath, d.toString('utf8')));
+  child.stderr.on('data', d => writeToLog(logPath, '[STDERR] ' + d.toString('utf8')));
+  child.on('error', err => {
+    writeToLog(logPath, `[ERROR] ssh (script): ${err.message}\n`);
+    callback(err);
+  });
+  child.on('close', (code, signal) => {
+    writeToLog(logPath, `[${new Date().toISOString()}] Script exit: ${code}${signal ? ` (signal: ${signal})` : ''}\n`);
+    if (code === 0) return callback(null);
+    const err = new Error(`Script exit: ${code}${signal ? ` (signal: ${signal})` : ''}`);
+    err.code = code;
+    err.signal = signal;
+    callback(err);
+  });
+}
+
 function validateActionBody(action) {
   if (!action || !action.type || !['script', 'deploy'].includes(action.type)) {
     return 'Invalid action type';
   }
-  if (action.type === 'script') {
-    if (!action.script) return 'Missing script name';
-    if (!normalizeScriptPath(action.script)) return 'Invalid script path';
-  } else {
-    if (!action.method || !['rsync', 'ssh'].includes(action.method)) return 'Invalid deploy method';
-    if (!action.user || !action.host) return 'Missing user or host';
-    if (typeof action.host !== 'string' || !/^[a-zA-Z0-9._:-]+$/.test(action.host)) return 'Invalid host';
-    if (typeof action.user !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(action.user)) return 'Invalid user';
-    if (action.method === 'rsync') {
-      if (!action.source || !action.destination) return 'rsync requires source and destination';
-      const normSource = String(action.source).replace(/^\.\//, '');
-      if (normSource.includes('..') || normSource.startsWith('/')) return 'Invalid rsync source path';
-    }
-    if (action.method === 'ssh' && !action.command) return 'ssh requires command';
+  if (!action.script) return 'Missing script name';
+  if (!normalizeScriptPath(action.script)) return 'Invalid script path';
+  if (!Array.isArray(action.machine_ids) || !action.machine_ids.length) {
+    return 'Select at least one deployment machine';
+  }
+  const ids = [...new Set(action.machine_ids.map(Number))];
+  if (ids.some(id => !Number.isInteger(id) || id <= 0)) return 'Invalid deployment machine id';
+  if (ids.length > 20) return 'Too many deployment machines';
+  const found = new Set(db.getDeployMachinesByIds(ids).map(m => m.id));
+  if (ids.some(id => !found.has(id))) return 'Deployment machine not found';
+  if (!action.method || !['rsync', 'ssh'].includes(action.method)) return 'Invalid deploy method';
+  if (action.method === 'rsync') {
+    if (!action.source || !action.destination) return 'rsync requires source and destination';
+    const normSource = String(action.source).replace(/^\.\//, '');
+    if (normSource.includes('..') || normSource.startsWith('/')) return 'Invalid rsync source path';
+  }
+  if (action.method === 'ssh' && !action.command) return 'ssh requires command';
+
+  if (action.notification_target_ids !== undefined) {
+    if (!Array.isArray(action.notification_target_ids)) return 'Invalid notification targets';
+    const nids = [...new Set(action.notification_target_ids.map(Number))];
+    if (nids.some(id => !Number.isInteger(id) || id <= 0)) return 'Invalid notification target id';
+    if (nids.length > 20) return 'Too many notification targets';
+  }
+  if (action.notification_template !== undefined) {
+    if (typeof action.notification_template !== 'string') return 'Invalid notification template';
+    if (action.notification_template.length > 2000) return 'Notification template too long';
   }
   return null;
 }
 
 function actionConfigFromBody(action) {
-  if (action.type === 'script') {
-    return { script: normalizeScriptPath(action.script) || action.script };
-  }
   const cfg = {
+    script: normalizeScriptPath(action.script) || action.script,
+    machine_ids: [...new Set(action.machine_ids.map(Number))],
     method: action.method,
-    user: action.user,
-    host: action.host,
   };
-  if (action.sshKey) cfg.sshKey = action.sshKey;
-  if (action.sshOptions) cfg.sshOptions = action.sshOptions;
   if (action.method === 'rsync') {
     cfg.source = action.source;
     cfg.destination = action.destination;
   } else {
     cfg.command = action.command;
+  }
+  if (Array.isArray(action.notification_target_ids)) {
+    cfg.notification_target_ids = [...new Set(action.notification_target_ids.map(Number))];
+  }
+  if (typeof action.notification_template === 'string' && action.notification_template.trim()) {
+    cfg.notification_template = action.notification_template.trim().slice(0, 2000);
   }
   return cfg;
 }
@@ -1130,7 +1390,7 @@ app.get('/api/auth/me', (req, res) => {
   const cookies = parseCookies(req.headers.cookie);
   const user = db.getSessionUser(cookies[COOKIE_NAME]);
   if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  res.json({ user });
+  res.json({ user, version: APP_VERSION });
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -1867,7 +2127,7 @@ app.get('/api/repos/:id/actions', (req, res) => {
   res.json(db.listRepoActions(repo.id));
 });
 
-app.put('/api/repos/:id/actions/:keyword', requireStaff, (req, res) => {
+app.put('/api/repos/:id/actions/:keyword', requireAuth, (req, res) => {
   const repo = db.getRepoById(parseInt(req.params.id, 10));
   if (!repo) return res.status(404).json({ error: 'Not found' });
 
@@ -1878,8 +2138,15 @@ app.put('/api/repos/:id/actions/:keyword', requireStaff, (req, res) => {
   const err = validateActionBody(body);
   if (err) return res.status(400).json({ error: err });
 
+  const targetIds = [...new Set((body.notification_target_ids || []).map(Number))];
+  for (const id of targetIds) {
+    if (!db.getNotification(id, req.user.id)) {
+      return res.status(400).json({ error: 'Notification target not found' });
+    }
+  }
+
   const config = actionConfigFromBody(body);
-  const action = db.upsertRepoAction(repo.id, keyword, body.type, config, body.enabled !== false);
+  const action = db.upsertRepoAction(repo.id, keyword, body.type, config, body.enabled !== false, req.user.id);
   db.audit(req.user, 'action_upsert', {
     repo_id: repo.id,
     keyword,
@@ -1936,6 +2203,140 @@ app.post('/api/repos/:id/actions/:keyword/run', (req, res) => {
   res.json({ status: 'enqueued', job_id: jobId });
 });
 
+// Deployment machines (staff manage; all users may list them for action selection)
+
+const MACHINE_HOST_RE = /^[a-zA-Z0-9._:-]+$/;
+const MACHINE_USER_RE = /^[a-zA-Z0-9._-]+$/;
+
+function sanitizeMachineBody(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Invalid payload' };
+  }
+  const name = String(body.name ?? '').trim();
+  const ssh_user = String(body.ssh_user ?? '').trim();
+  const host = String(body.host ?? '').trim();
+  if (!name) return { error: 'Name required' };
+  if (name.length > 100) return { error: 'Name too long' };
+  if (!ssh_user) return { error: 'SSH user required' };
+  if (!MACHINE_USER_RE.test(ssh_user)) return { error: 'Invalid SSH user' };
+  if (!host) return { error: 'Host required' };
+  if (!MACHINE_HOST_RE.test(host)) return { error: 'Invalid host' };
+  const port = body.port === undefined || body.port === '' || body.port === null
+    ? 22
+    : Number(body.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return { error: 'Invalid port (1-65535)' };
+  const ssh_key = String(body.ssh_key ?? '').trim().slice(0, 100);
+  if (ssh_key && !db.getSshKeyByName(ssh_key)) return { error: 'SSH key not found' };
+  const ssh_options = String(body.ssh_options ?? '').trim().slice(0, 2000);
+  return { clean: { name, ssh_user, host, port, ssh_key, ssh_options } };
+}
+
+app.get('/api/machines', requireAuth, (req, res) => {
+  const isStaff = req.user.role === 'admin' || req.user.role === 'devops';
+  res.json(db.listDeployMachines().map(m => {
+    if (isStaff) return m;
+    return { id: m.id, name: m.name, ssh_user: m.ssh_user, host: m.host, port: m.port };
+  }));
+});
+
+app.post('/api/machines', requireStaff, (req, res) => {
+  const { error, clean } = sanitizeMachineBody(req.body);
+  if (error) return res.status(400).json({ error });
+  let machine;
+  try {
+    machine = db.createDeployMachine(clean);
+  } catch (e) {
+    if (String(e.message).includes('UNIQUE')) {
+      return res.status(409).json({ error: 'A machine with that name already exists' });
+    }
+    throw e;
+  }
+  db.audit(req.user, 'machine_create', { id: machine.id, name: machine.name }, clientIp(req));
+  res.status(201).json(machine);
+});
+
+app.patch('/api/machines/:id', requireStaff, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const existing = db.getDeployMachineById(id);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+  const { error, clean } = sanitizeMachineBody(req.body);
+  if (error) return res.status(400).json({ error });
+  let machine;
+  try {
+    machine = db.updateDeployMachine(id, clean);
+  } catch (e) {
+    if (String(e.message).includes('UNIQUE')) {
+      return res.status(409).json({ error: 'A machine with that name already exists' });
+    }
+    throw e;
+  }
+  db.audit(req.user, 'machine_update', { id, name: machine.name }, clientIp(req));
+  res.json(machine);
+});
+
+app.delete('/api/machines/:id', requireStaff, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const machine = db.getDeployMachineById(id);
+  if (!machine) return res.status(404).json({ error: 'Not found' });
+  const uses = db.countActionUsesForMachine(id);
+  if (uses > 0) {
+    return res.status(409).json({
+      error: `In use by ${uses} action(s). Remove it from those actions first.`,
+    });
+  }
+  db.deleteDeployMachine(id);
+  db.audit(req.user, 'machine_delete', { id, name: machine.name }, clientIp(req));
+  res.json({ status: 'deleted' });
+});
+
+// SSH keys (uploaded private keys, stored encrypted at rest)
+
+const SSH_KEY_NAME_RE = /^[a-zA-Z0-9 _.-]{1,100}$/;
+const SSH_KEY_MAX_BYTES = 16384;
+
+app.get('/api/sshkeys', requireStaff, (req, res) => {
+  res.json(db.listSshKeys());
+});
+
+app.post('/api/sshkeys', requireStaff, (req, res) => {
+  const body = req.body || {};
+  const name = String(body.name ?? '').trim();
+  const content = typeof body.content === 'string' ? body.content : '';
+  if (!SSH_KEY_NAME_RE.test(name)) return res.status(400).json({ error: 'Invalid key name' });
+  if (!content.trim()) return res.status(400).json({ error: 'Key file content required' });
+  if (Buffer.byteLength(content, 'utf8') > SSH_KEY_MAX_BYTES) return res.status(400).json({ error: 'Key file too large (max 16 KB)' });
+  if (!content.includes('PRIVATE KEY') && !content.includes('OPENSSH PRIVATE KEY')) {
+    return res.status(400).json({ error: 'Not a private key file' });
+  }
+  const fingerprint = 'SHA256:' + crypto.createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 24);
+  let key;
+  try {
+    key = db.createSshKey({ name, key_data: encryptSecret(content), fingerprint });
+  } catch (e) {
+    if (String(e.message).includes('UNIQUE')) {
+      return res.status(409).json({ error: 'A key with that name already exists' });
+    }
+    throw e;
+  }
+  db.audit(req.user, 'ssh_key_create', { id: key.id, name: key.name }, clientIp(req));
+  res.status(201).json(key);
+});
+
+app.delete('/api/sshkeys/:id', requireStaff, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const key = db.getSshKeyById(id);
+  if (!key) return res.status(404).json({ error: 'Not found' });
+  const uses = db.countMachineUsesForKey(key.name);
+  if (uses > 0) {
+    return res.status(409).json({
+      error: `In use by ${uses} machine(s). Remove it from those machines first.`,
+    });
+  }
+  db.deleteSshKey(id);
+  db.audit(req.user, 'ssh_key_delete', { id, name: key.name }, clientIp(req));
+  res.json({ status: 'deleted' });
+});
+
 // Scripts
 
 app.get('/api/scripts', (req, res) => {
@@ -1969,7 +2370,7 @@ app.delete('/api/scripts/:name', requireStaff, (req, res) => {
 // Global settings (staff only)
 
 app.get('/api/settings', requireStaff, (req, res) => {
-  res.json({ settings: getSettings() });
+  res.json({ settings: getSettings(), version: APP_VERSION });
 });
 
 app.put('/api/settings', requireStaff, (req, res) => {

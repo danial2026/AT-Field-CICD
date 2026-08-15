@@ -15,6 +15,8 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-me}
       - DB_PATH=/app/data/at-field-ci.db
       - COOKIE_SECURE=${COOKIE_SECURE:-0}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data
       - ./scripts:/app/scripts

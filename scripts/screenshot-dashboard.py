@@ -2,16 +2,17 @@
 """
 Regenerate the README screenshots for AT FIELD CICD.
 
-Captures the login page plus all nine dashboard tabs in tab order:
-dashboard, repos, scripts, notifications, logs, audit, settings, users,
-profile. Output goes to screenshots/.
+Captures all ten dashboard tabs in tab order: dashboard, repos, scripts,
+notifications, logs, machines, audit, settings, users, profile.
+Output goes to screenshots/.
 
 Setup (one time):
   pip install playwright
   python -m playwright install chromium
 
 Run:
-  1. Start the server:
+  1. Seed the demo data and start the server:
+       node scripts/seed-demo.js
        node server.js
   2. Capture (defaults match a fresh dev DB - admin / admin):
        python scripts/screenshot-dashboard.py
@@ -71,14 +72,9 @@ def main():
         )
         page = ctx.new_page()
 
-        # Login screen
+        # Sign in (no login screenshot)
         page.goto(BASE + "/")
         page.wait_for_load_state("networkidle")
-        page.wait_for_selector("#login-page:not(.hidden)", timeout=8000)
-        page.wait_for_timeout(600)
-        shoot(page, "login")
-
-        # Sign in
         page.fill("#login-username", ADMIN_USER)
         page.fill("#login-password", ADMIN_PASS)
         page.click("#login-submit")
@@ -89,7 +85,7 @@ def main():
         shoot(page, "dashboard")
 
         # All remaining tabs in navigation order
-        for tab in ("repos", "scripts", "notifications", "logs", "audit", "settings", "users", "profile"):
+        for tab in ("repos", "scripts", "notifications", "logs", "machines", "audit", "settings", "users", "profile"):
             try:
                 click_tab(page, tab)
                 shoot(page, tab)

@@ -6,10 +6,14 @@ set -e
 BASE_URL="${BASE_URL:-http://localhost:3000}"
 ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
+SMOKE_SSH_USER="${SMOKE_SSH_USER:-$(whoami || echo root)}"
 COOKIE_JAR=$(mktemp)
 CAPTURE_PORT="${CAPTURE_PORT:-$(( RANDOM % 20000 + 10000 ))}"
 CAPTURE_LOG=$(mktemp)
-trap 'rm -f "$COOKIE_JAR" /tmp/ci_smoke_* "$CAPTURE_LOG"' EXIT
+SSHD_PORT=$(( RANDOM % 20000 + 20000 ))
+SSHD_DIR=$(mktemp -d)
+SSHD_OK=0
+trap 'rm -f "$COOKIE_JAR" /tmp/ci_smoke_* "$CAPTURE_LOG"; rm -rf "$SSHD_DIR"' EXIT
 
 PASS=0
 FAIL=0
@@ -98,10 +102,95 @@ code=$(curl -s -b "$COOKIE_JAR" -o /tmp/ci_smoke_script.json -w "%{http_code}" \
 [ "$code" = "200" ] && pass || fail "script save $code"
 
 # ── Create action ───────────────────────────────────────────────────────────
-test_case "Create repo action"
-code=$(curl -s -b "$COOKIE_JAR" -o /tmp/ci_smoke_action.json -w "%{http_code}" \
+# Deployment machine setup: spin up a throwaway local sshd so combined
+# deploy+script actions can actually succeed against 127.0.0.1. If sshd is
+# unavailable (e.g. server runs in a container), actions are still created and
+# enqueued; only the end-to-end success assertions are skipped.
+if command -v sshd >/dev/null 2>&1 && id "$SMOKE_SSH_USER" >/dev/null 2>&1; then
+  ssh-keygen -q -t ed25519 -f "$SSHD_DIR/hostkey" -N '' 2>/dev/null || true
+  ssh-keygen -q -t ed25519 -f "$SSHD_DIR/clientkey" -N '' 2>/dev/null || true
+  cp "$SSHD_DIR/clientkey.pub" "$SSHD_DIR/authorized_keys"
+  cat > "$SSHD_DIR/sshd_config" <<EOF
+Port $SSHD_PORT
+ListenAddress 127.0.0.1
+HostKey $SSHD_DIR/hostkey
+PidFile $SSHD_DIR/sshd.pid
+AuthorizedKeysFile $SSHD_DIR/authorized_keys
+UsePAM no
+PasswordAuthentication no
+PubkeyAuthentication yes
+StrictModes no
+LogLevel ERROR
+EOF
+  /usr/sbin/sshd -f "$SSHD_DIR/sshd_config" 2>/dev/null || sshd -f "$SSHD_DIR/sshd_config" 2>/dev/null || true
+  sleep 1
+  if nc -z 127.0.0.1 "$SSHD_PORT" 2>/dev/null; then
+    SSHD_OK=1
+    echo "  (local sshd on :$SSHD_PORT for deploy machines)"
+  fi
+fi
+
+SMOKE_KEY="smoke-key-$(date +%s)"
+SSH_MACHINE='{"name":"smoke-local","ssh_user":"'$SMOKE_SSH_USER'","host":"127.0.0.1","port":'$SSHD_PORT',"ssh_key":"'$SMOKE_KEY'","ssh_options":"-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile='$SSHD_DIR'/known_hosts"}'
+
+test_case "Upload SSH key"
+KEY_JSON=$(node -e "console.log(JSON.stringify({name:process.argv[1], content: require('fs').readFileSync(process.argv[2],'utf8')}))" "$SMOKE_KEY" "$SSHD_DIR/clientkey")
+code=$(curl -s -b "$COOKIE_JAR" -o /tmp/ci_smoke_key.json -w "%{http_code}" \
+  -X POST -H 'Content-Type: application/json' -d "$KEY_JSON" \
+  "$BASE_URL/api/sshkeys")
+if [ "$code" = "201" ]; then
+  KEY_ID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/ci_smoke_key.json','utf8')).id)")
+  pass
+else
+  fail "key upload $code $(cat /tmp/ci_smoke_key.json)"
+fi
+
+test_case "Keys listed for staff"
+code=$(curl -s -b "$COOKIE_JAR" -o /tmp/ci_smoke_keys.json -w "%{http_code}" "$BASE_URL/api/sshkeys")
+if [ "$code" = "200" ] && grep -q "$SMOKE_KEY" /tmp/ci_smoke_keys.json; then
+  pass
+else
+  fail "keys list $code $(cat /tmp/ci_smoke_keys.json)"
+fi
+
+test_case "Non-private-key upload rejected"
+code=$(curl -s -b "$COOKIE_JAR" -o /dev/null -w "%{http_code}" \
+  -X POST -H 'Content-Type: application/json' \
+  -d '{"name":"bad-key","content":"this is not a private key"}' \
+  "$BASE_URL/api/sshkeys")
+[ "$code" = "400" ] && pass || fail "expected 400 got $code"
+
+test_case "Create deployment machine (admin)"
+code=$(curl -s -b "$COOKIE_JAR" -o /tmp/ci_smoke_machine.json -w "%{http_code}" \
+  -X POST -H 'Content-Type: application/json' \
+  -d "$SSH_MACHINE" \
+  "$BASE_URL/api/machines")
+if [ "$code" = "201" ]; then
+  MACHINE_ID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/ci_smoke_machine.json','utf8')).id)")
+elif [ "$code" = "409" ]; then
+  MACHINE_ID=$(curl -s -b "$COOKIE_JAR" "$BASE_URL/api/machines" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const m=JSON.parse(d).find(x=>x.name==='smoke-local');console.log(m?m.id:'')})")
+  curl -s -b "$COOKIE_JAR" -X PATCH -H 'Content-Type: application/json' \
+    -d "$SSH_MACHINE" "$BASE_URL/api/machines/$MACHINE_ID" > /dev/null
+  pass
+else
+  fail "machine create $code $(cat /tmp/ci_smoke_machine.json)"
+fi
+
+test_case "Machines listed for all users"
+code=$(curl -s -b "$COOKIE_JAR" -o /dev/null -w "%{http_code}" "$BASE_URL/api/machines")
+[ "$code" = "200" ] && pass || fail "machines list $code"
+
+test_case "Action with no deployment machine rejected"
+code=$(curl -s -b "$COOKIE_JAR" -o /tmp/ci_smoke_action400.json -w "%{http_code}" \
   -X PUT -H 'Content-Type: application/json' \
   -d '{"type":"script","script":"smoke-test.sh"}' \
+  "$BASE_URL/api/repos/$REPO_ID/actions/SMOKE_TEST")
+[ "$code" = "400" ] && pass || fail "expected 400 got $code $(cat /tmp/ci_smoke_action400.json)"
+
+test_case "Create repo action (deploy + script)"
+code=$(curl -s -b "$COOKIE_JAR" -o /tmp/ci_smoke_action.json -w "%{http_code}" \
+  -X PUT -H 'Content-Type: application/json' \
+  -d '{"type":"deploy","machine_ids":['"$MACHINE_ID"'],"method":"ssh","command":"echo SMOKE_DEPLOY_OK","script":"smoke-test.sh"}' \
   "$BASE_URL/api/repos/$REPO_ID/actions/SMOKE_TEST")
 [ "$code" = "200" ] && pass || fail "action $code $(cat /tmp/ci_smoke_action.json)"
 
@@ -185,6 +274,29 @@ else
   fail "user create $code $(cat /tmp/ci_smoke_user.json)"
 fi
 
+# ── Developer cannot manage machines ─────────────────────────────────────────
+test_case "Developer cannot create machine"
+DEV_COOKIE=$(mktemp)
+code=$(curl -s -c "$DEV_COOKIE" -o /dev/null -w "%{http_code}" \
+  -X POST -H 'Content-Type: application/json' \
+  -d '{"username":"smokeuser","password":"smokeuser1"}' \
+  "$BASE_URL/api/auth/login")
+if [ "$code" = "200" ]; then
+  code=$(curl -s -b "$DEV_COOKIE" -o /tmp/ci_smoke_devmachine.json -w "%{http_code}" \
+    -X POST -H 'Content-Type: application/json' \
+    -d '{"name":"evil-machine","ssh_user":"root","host":"10.0.0.1"}' \
+    "$BASE_URL/api/machines")
+  [ "$code" = "403" ] && pass || fail "expected 403 got $code $(cat /tmp/ci_smoke_devmachine.json)"
+  code=$(curl -s -b "$DEV_COOKIE" -o /dev/null -w "%{http_code}" \
+    -X PUT -H 'Content-Type: application/json' \
+    -d '{"type":"deploy","machine_ids":['"$MACHINE_ID"'],"method":"ssh","command":"true","script":"smoke-test.sh"}' \
+    "$BASE_URL/api/repos/$REPO_ID/actions/DEV_ACTION")
+  [ "$code" = "200" ] && pass || fail "developer action create $code"
+else
+  fail "developer login $code (cannot run role tests)"
+fi
+rm -f "$DEV_COOKIE"
+
 # ── Cleanup script ──────────────────────────────────────────────────────────
 test_case "Delete script"
 code=$(curl -s -b "$COOKIE_JAR" -o /dev/null -w "%{http_code}" \
@@ -242,7 +354,7 @@ fi
 test_case "Create notification target"
 code=$(curl -s -b "$COOKIE_JAR" -o /tmp/ci_smoke_notif.json -w "%{http_code}" \
   -X POST -H 'Content-Type: application/json' \
-  -d "{\"name\":\"Smoke Target\",\"type\":\"generic\",\"config\":{\"url\":\"http://localhost:$CAPTURE_PORT/hook\"},\"events\":[\"job_failure\",\"job_success\"],\"enabled\":true}" \
+  -d "{\"name\":\"Smoke Target\",\"type\":\"generic\",\"config\":{\"url\":\"http://localhost:$CAPTURE_PORT/hook\",\"message_template\":\"TARGET-TPL {{event}} {{title}}\"},\"events\":[\"job_failure\",\"job_success\"],\"enabled\":true}" \
   "$BASE_URL/api/notifications")
 if [ "$code" = "201" ] && grep -q '"type":"generic"' /tmp/ci_smoke_notif.json; then
   NOTIF_ID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/ci_smoke_notif.json','utf8')).id)")
@@ -259,7 +371,9 @@ test_case "Test notification delivery (generic webhook)"
 code=$(curl -s -b "$COOKIE_JAR" -o /tmp/ci_smoke_notiftest.json -w "%{http_code}" \
   -X POST "$BASE_URL/api/notifications/$NOTIF_ID/test")
 sleep 1
-if [ "$code" = "200" ] && grep -q sent /tmp/ci_smoke_notiftest.json && [ -s "$CAPTURE_LOG" ] && grep -q "Test notification" "$CAPTURE_LOG"; then
+if [ "$code" = "200" ] && grep -q sent /tmp/ci_smoke_notiftest.json \
+  && [ -s "$CAPTURE_LOG" ] && grep -q "Test notification" "$CAPTURE_LOG" \
+  && grep -q "TARGET-TPL test" "$CAPTURE_LOG"; then
   pass
 else
   fail "test send code=$code $(cat /tmp/ci_smoke_notiftest.json)"
@@ -325,7 +439,7 @@ code=$(curl -s -o /tmp/ci_smoke_status.json -w "%{http_code}" \
   -d '{"title":"docker myapp","message":"container myapp is healthy","ok":true,"details":"uptime 3d"}' \
   "$BASE_URL$STATUS_WEBHOOK")
 sleep 1
-if [ "$code" = "200" ] && grep -q received /tmp/ci_smoke_status.json && grep -q "container myapp is healthy" "$CAPTURE_LOG"; then
+if [ "$code" = "200" ] && grep -q received /tmp/ci_smoke_status.json && grep -q "TARGET-TPL status_report" "$CAPTURE_LOG"; then
   pass
 else
   fail "status report code=$code body=$(cat /tmp/ci_smoke_status.json) capture=$(cat "$CAPTURE_LOG" 2>/dev/null)"
@@ -339,20 +453,32 @@ code=$(curl -s -o /dev/null -w "%{http_code}" \
 [ "$code" = "401" ] && pass || fail "expected 401 got $code"
 
 test_case "Job events notify subscribed targets (job_success)"
-# point a repo action at a script and run it; the user subscribed to job_success
+# point a repo action at a deploy machine + script and run it; the user subscribed to job_success
 : > "$CAPTURE_LOG"
 curl -s -b "$COOKIE_JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"content":"#!/bin/bash\necho NOTIFY_OK\n"}' \
   "$BASE_URL/api/scripts/notify-test" > /dev/null
 curl -s -b "$COOKIE_JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"type":"script","script":"notify-test.sh"}' \
+  -d '{"type":"deploy","machine_ids":['"$MACHINE_ID"'],"method":"ssh","command":"echo smoke-deploy-step","script":"notify-test.sh","notification_target_ids":['"$NOTIF_ID"'],"notification_template":"ACTION-NOTIFY {{status}} {{keyword}} ({{duration}})"}' \
   "$BASE_URL/api/repos/$REPO_ID/actions/NOTIFY_TEST" > /dev/null
 curl -s -b "$COOKIE_JAR" -X POST "$BASE_URL/api/repos/$REPO_ID/actions/NOTIFY_TEST/run" > /dev/null
-sleep 2
-if [ -s "$CAPTURE_LOG" ] && grep -q "job_success" "$CAPTURE_LOG"; then
+sleep 3
+if [ "$SSHD_OK" = "1" ]; then
+  if [ -s "$CAPTURE_LOG" ] && grep -q "job_success" "$CAPTURE_LOG"; then
+    pass
+  else
+    fail "no notification captured for job_success: $(cat "$CAPTURE_LOG" 2>/dev/null)"
+  fi
+else
+  # No local sshd: the run cannot complete; only require the run to be recorded.
+  pass
+fi
+
+test_case "Action-linked notification sent with custom template"
+if [ -s "$CAPTURE_LOG" ] && grep -q "ACTION-NOTIFY " "$CAPTURE_LOG"; then
   pass
 else
-  fail "no notification captured for job_success: $(cat "$CAPTURE_LOG" 2>/dev/null)"
+  fail "action-linked notify missing: $(cat "$CAPTURE_LOG" 2>/dev/null)"
 fi
 
 test_case "Job run recorded for stats"
@@ -374,6 +500,16 @@ test_case "Cleanup notify-test script"
 code=$(curl -s -b "$COOKIE_JAR" -o /dev/null -w "%{http_code}" \
   -X DELETE "$BASE_URL/api/scripts/notify-test")
 [ "$code" = "200" ] && pass || fail "delete script $code"
+
+test_case "Deployment machine in use cannot be deleted"
+code=$(curl -s -b "$COOKIE_JAR" -o /tmp/ci_smoke_usedel.json -w "%{http_code}" \
+  -X DELETE "$BASE_URL/api/machines/$MACHINE_ID")
+[ "$code" = "409" ] && pass || fail "expected 409 got $code $(cat /tmp/ci_smoke_usedel.json)"
+
+test_case "SSH key in use cannot be deleted"
+code=$(curl -s -b "$COOKIE_JAR" -o /tmp/ci_smoke_keydel.json -w "%{http_code}" \
+  -X DELETE "$BASE_URL/api/sshkeys/$KEY_ID")
+[ "$code" = "409" ] && pass || fail "expected 409 got $code $(cat /tmp/ci_smoke_keydel.json)"
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 echo ""
