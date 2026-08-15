@@ -8,7 +8,8 @@
     "start": "node server.js",
     "dev": "node server.js",
     "test": "bash test-smoke.sh",
-    "audit": "npm audit"
+    "audit": "npm audit",
+    "build:editor": "node scripts/build-editor.mjs"
   },
   "keywords": [
     "ci",
@@ -27,10 +28,14 @@
     "type": "git",
     "url": "https://github.com/danial2026/AT-Field-CICD"
   },
-  "dependencies": {
+"dependencies": {
     "better-sqlite3": "^13.0.3",
     "dotenv": "^16.3.1",
     "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "monaco-editor": "^0.52.2"
   },
   "engines": {
     "node": ">=20.0.0",

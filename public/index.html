@@ -46,6 +46,7 @@
     </style>
     <link rel="icon" href="at-field-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="vendor/editor/editor-main.css">
 </head>
 <body>
     <!-- SPLASH -->
@@ -517,10 +518,65 @@
                     <input type="text" id="machine-ssh-options" placeholder="-o StrictHostKeyChecking=accept-new" autocomplete="off">
                 </div>
                 <div class="form-actions">
+                    <button type="button" id="machine-help-btn" class="btn">Setup Guide</button>
                     <button type="button" class="btn" data-modal="machine-modal">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save Machine</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- DEPLOYMENT MACHINE SETUP GUIDE MODAL -->
+    <div id="machine-help-modal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2>Add Deployment Machine</h2>
+                <button class="close-btn" data-modal="machine-help-modal" type="button">&times;</button>
+            </div>
+            <div class="modal-body guide">
+                <p class="modal-lead">A deployment machine is the server where AT Field CI/CD will run your deployment commands.</p>
+
+                <h3>Add a Server</h3>
+                <p>Go to:</p>
+                <p><strong>Machines → Add Machine</strong></p>
+                <p>Enter:</p>
+                <table class="guide-table">
+                    <thead>
+                        <tr><th>Field</th><th>Example</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>Name</td><td>Production</td></tr>
+                        <tr><td>Host</td><td><code>192.168.1.50</code></td></tr>
+                        <tr><td>Port</td><td><code>22</code></td></tr>
+                        <tr><td>Username</td><td><code>deploy</code></td></tr>
+                    </tbody>
+                </table>
+                <p>The server must have SSH enabled and the selected user must be able to log in through SSH.</p>
+
+                <h3>Add Your Home Docker Host</h3>
+                <p>If AT Field CI/CD is running on your home server with Docker, you can add that same server as a deployment machine.</p>
+                <p>Use:</p>
+                <table class="guide-table">
+                    <thead>
+                        <tr><th>Field</th><th>Value</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>Name</td><td>Home Docker Host</td></tr>
+                        <tr><td>Host</td><td><code>host.docker.internal</code></td></tr>
+                        <tr><td>Port</td><td><code>22</code></td></tr>
+                        <tr><td>Username</td><td>Your Linux username</td></tr>
+                    </tbody>
+                </table>
+                <p><code>host.docker.internal</code> is already configured in the Docker Compose setup and points from the AT Field container to the Docker host.</p>
+                <p>After adding it, AT Field can run commands directly on your Docker host, such as:</p>
+                <pre>docker compose pull
+docker compose up -d</pre>
+                <p>Make sure the SSH user has permission to run Docker commands.</p>
+
+                <div class="form-actions">
+                    <button type="button" class="btn" data-modal="machine-help-modal">Close</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -651,7 +707,7 @@
                 </div>
                 <div id="ssh-fields" class="form-group hidden">
                     <label for="deploy-command" style="margin-top: 16px;">Command (optional)</label>
-                    <textarea id="deploy-command" rows="3" placeholder="cd /app && npm run deploy"></textarea>
+                    <textarea id="deploy-command" data-editor data-lang="shell" rows="3" placeholder="cd /app && npm run deploy"></textarea>
                     <span class="help-text">Runs on each deployment machine via SSH, before the script. Leave empty to skip the SSH step entirely.</span>
                 </div>
 
@@ -663,7 +719,7 @@
                 <div id="action-script-editor" class="form-group">
                     <label for="action-script-content">Script template</label>
                     <span class="help-text" id="action-script-editor-hint">Template only — edit it to fit your build. Changes are saved to the script.</span>
-                    <textarea id="action-script-content" class="monospace script-editor" rows="14" spellcheck="false"></textarea>
+                    <textarea id="action-script-content" data-editor data-lang="shell" class="monospace script-editor" rows="14" spellcheck="false"></textarea>
                     <span class="help-text">Runs on each deployment machine. Env: CI_KEYWORD, CI_REPO, CI_COMMIT, CI_PROVIDER, CI_GIT_USER, CI_GIT_TOKEN, CI_CLONE_AUTH_URL.</span>
                 </div>
 
@@ -678,7 +734,7 @@
                 <div class="form-group">
                     <label for="action-notify-template">Custom message template (optional)</label>
                     <div class="template-input-row">
-                        <textarea id="action-notify-template" class="monospace" rows="4" spellcheck="false"></textarea>
+                        <textarea id="action-notify-template" data-editor class="monospace" rows="4" spellcheck="false"></textarea>
                         <button type="button" id="action-notify-template-reset" class="btn btn-small">Reset</button>
                     </div>
                     <span class="help-text">Replaces the default message. Placeholders like <span class="monospace">{{title}} {{message}} {{repo}} {{keyword}} {{status}} {{duration}} {{commit}} {{trigger}}</span> are filled from the job result.</span>
@@ -705,7 +761,7 @@
                 </div>
                 <div class="form-group">
                     <label for="script-content">Content</label>
-                    <textarea id="script-content" class="monospace" rows="18" required placeholder="#!/bin/bash&#10;set -e&#10;# clone: git clone &quot;$CI_CLONE_AUTH_URL&quot; workdir"></textarea>
+                    <textarea id="script-content" data-editor data-lang="shell" class="monospace" rows="18" required placeholder="#!/bin/bash&#10;set -e&#10;# clone: git clone &quot;$CI_CLONE_AUTH_URL&quot; workdir"></textarea>
                     <span class="help-text">Env: CI_GIT_USER, CI_GIT_TOKEN, CI_CLONE_AUTH_URL, CI_REPO, CI_KEYWORD</span>
                 </div>
                 <div class="form-actions">
@@ -814,7 +870,7 @@
                 <div class="form-group" style="margin-top:16px;">
                     <label for="notification-message-template">Custom message template (optional)</label>
                     <div class="template-input-row">
-                        <textarea id="notification-message-template" class="monospace" rows="5" spellcheck="false"></textarea>
+                        <textarea id="notification-message-template" data-editor class="monospace" rows="5" spellcheck="false"></textarea>
                         <button type="button" id="notification-template-reset" class="btn btn-small">Reset</button>
                     </div>
                     <span class="help-text">Replaces the default message. Any <span class="monospace">{{field}}</span> is filled from the event payload — add your own extra fields, e.g. <span class="monospace">{{repo_slug}} / {{trigger}} / {{job_id}}</span>. Reset restores the default template.</span>
@@ -898,6 +954,8 @@
     </div>
 
     <div id="toast" class="toast hidden"></div>
+    <script src="vendor/editor/editor-main.js"></script>
+    <script src="editor.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

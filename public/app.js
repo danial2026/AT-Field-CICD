@@ -2005,6 +2005,9 @@ document.addEventListener('DOMContentLoaded', () => {
     resetMachineForm();
     openModal('machine-modal');
   });
+  document.getElementById('machine-help-btn').addEventListener('click', () => {
+    openModal('machine-help-modal');
+  });
   document.getElementById('add-key-btn').addEventListener('click', () => {
     document.getElementById('key-form').reset();
     openModal('key-modal');

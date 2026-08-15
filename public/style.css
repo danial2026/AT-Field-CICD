@@ -40,6 +40,11 @@
   box-sizing: border-box;
 }
 
+::selection {
+  background: var(--white-30);
+  color: var(--text-primary);
+}
+
 html,
 body {
   width: 100%;
@@ -481,6 +486,30 @@ header h1 {
   max-width: 800px;
 }
 
+/* Monaco (VSCode-style) editors replace multiline textareas */
+textarea.monaco-original {
+  display: none;
+}
+
+.monaco-host {
+  width: 100%;
+  min-height: 96px;
+  background: var(--bg-primary);
+  border: 1px solid var(--white-10);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+}
+
+.monaco-host:focus-within {
+  border-color: var(--white-30);
+}
+
+.template-input-row .monaco-host {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* Script template editor inside the action form */
 .script-editor {
   width: 100%;
@@ -613,6 +642,33 @@ header h1 {
 
 .guide-warning h3 {
   margin-top: 16px;
+}
+
+.guide-table {
+  width: 100%;
+  margin: 12px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.guide-table th,
+.guide-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid var(--white-10);
+}
+
+.guide-table th {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+}
+
+.guide-table td {
+  color: var(--text-primary);
 }
 
 .close-btn {
