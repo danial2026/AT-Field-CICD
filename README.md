@@ -3,7 +3,7 @@
   <span style="font-size: 2em; font-weight: bold; margin-left: 12px;">AT FIELD CICD</span>
 </div>
 
-![Version](https://img.shields.io/badge/version-0.0.4-blue)
+![Version](https://img.shields.io/badge/version-0.0.5-blue)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -66,7 +66,9 @@ node server.js                # sign in as admin / demo1234
 
 **Actions:** every action pairs a deploy step with a script. Devops/admin register **deployment machines** (SSH target + port + key) in the *Machines* tab; each action picks at least one machine, a deploy method (`rsync` or `ssh`), and a script. The job connects to each machine, deploys, then runs the script on the machine itself. SSH keys are uploaded in the Machines tab and stored encrypted at rest in the DB.
 
-**Notifications:** targets (webhooks, Discord, Slack, Telegram, Pushover, Gotify, ntfy, generic Shoutrrr-style URLs) are created in the *Notifications* tab, subscribed to job events, and may carry a custom message template. Actions can additionally select which of your targets get a completion notification (with an optional per-action template) — see the action editor's *Notifications* section.
+**Notifications:** team-shared targets (webhooks, Discord, Slack, Telegram, Pushover, Gotify, ntfy, generic Shoutrrr-style URLs) subscribed to job events, with custom message templates. Actions can also pick which targets get a completion notification.
+
+**Roles:** `admin` / `devops` manage everything (machines, SSH keys, settings, users, audit). `developer` accounts add/edit repos, actions, scripts and notification targets.
 
 ## Security
 

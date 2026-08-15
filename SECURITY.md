@@ -20,8 +20,8 @@ the security controls in place and what you must do to deploy it safely.
 | Role | Can view | Can mutate CI/CD resources |
 |------|----------|----------------------------|
 | `admin` | Everything | Everything + user management |
-| `devops` | Everything | Repos, actions, scripts, secrets, machines (manage) |
-| `developer` | repos, scripts, logs, status, machines (list for selection) | Actions (create/edit/run), own profile only |
+| `devops` | Everything | Everything (incl. machines, SSH keys, settings, audit) |
+| `developer` | Everything (machines tab hidden — machines listed for action selection only) | Repos, actions, scripts and notifications (create/edit; deletion staff-only), manual runs, own profile |
 
 All `/api/*` routes (except `/api/auth/login`, `/api/auth/me`) require a valid session.
 Mutation routes use `requireStaff` (admin/devops) or `requireAdminUser` (user management).

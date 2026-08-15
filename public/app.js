@@ -393,10 +393,10 @@ function renderReposList() {
   container.innerHTML = appState.repos.map(repo => {
     const buttons = [
       `<button class="btn btn-small btn-primary" data-open-repo="${repo.id}">Actions</button>`,
+      `<button class="btn btn-small" data-edit-repo="${repo.id}">Edit</button>`,
     ];
     if (appState.isStaff) {
       buttons.push(
-        `<button class="btn btn-small" data-edit-repo="${repo.id}">Edit</button>`,
         `<button class="btn btn-small" data-reveal-secret="${repo.id}">Secret</button>`,
         `<button class="btn btn-small btn-danger" data-del-repo="${repo.id}">Delete</button>`
       );
@@ -411,7 +411,6 @@ function renderReposList() {
           ${repo.poll_enabled ? ' · poll' : ''}
           ${repo.has_git_token ? ' · private' : ''}
         </div>
-        <span class="action-type-badge script">${escapeHtml(repo.provider)}</span>
       </div>
       <div class="item-actions">${buttons.join('')}</div>
     </div>
@@ -717,15 +716,23 @@ function populateNotifyPicker(selectedIds = []) {
     container.innerHTML = '<p class="empty-state">No notification targets yet — add one in the Notifications tab.</p>';
     return;
   }
-  container.innerHTML = targets.map(t => {
-    const disabled = !t.enabled;
-    return `
-      <label class="checkbox-label">
-        <input type="checkbox" class="notify-pick" value="${t.id}" ${selected.has(t.id) ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
-        <span>${escapeHtml(t.name)}${disabled ? ' <span class="muted">(disabled)</span>' : ''}</span>
-      </label>
-    `;
-  }).join('');
+  container.innerHTML = `
+    <div class="picker-list-header">
+      <span class="picker-check"></span>
+      <span>Name</span>
+      <span>Type</span>
+      <span>Status</span>
+    </div>
+    ${targets.map(t => {
+      const disabled = !t.enabled;
+      return `
+      <label class="picker-list-row">
+        <span class="picker-check"><input type="checkbox" class="notify-pick" value="${t.id}" ${selected.has(t.id) ? 'checked' : ''} ${disabled ? 'disabled' : ''}></span>
+        <span class="picker-name">${escapeHtml(t.name)}</span>
+        <span class="picker-detail">${escapeHtml(t.type)}</span>
+        <span class="picker-detail pick-status ${disabled ? 'off' : 'on'}">${disabled ? 'Disabled' : 'Enabled'}</span>
+      </label>`;
+    }).join('')}`;
 }
 
 function showDeployMethodFields(method) {
@@ -736,10 +743,9 @@ function showDeployMethodFields(method) {
 function updateActionModalPermissions() {
   const editor = document.getElementById('action-script-content');
   if (!editor) return;
-  editor.readOnly = !appState.isStaff;
-  document.getElementById('action-script-editor-hint').textContent = appState.isStaff
-    ? 'Template only — edit it to fit your build. Changes are saved to the script.'
-    : 'Read-only preview — only staff can edit script content.';
+  editor.readOnly = false;
+  document.getElementById('action-script-editor-hint').textContent =
+    'Template only — edit it to fit your build. Changes are saved to the script.';
 }
 
 function populateMachinePicker(selectedIds = []) {
@@ -751,12 +757,21 @@ function populateMachinePicker(selectedIds = []) {
       : '<p class="empty-state">No deployment machines available — ask DevOps to add one.</p>';
     return;
   }
-  container.innerHTML = appState.machines.map(m => `
-    <label class="checkbox-label">
-      <input type="checkbox" class="machine-pick" value="${m.id}" ${selected.has(m.id) ? 'checked' : ''}>
-      ${escapeHtml(m.name)} <span class="item-details">(${escapeHtml(m.ssh_user)}@${escapeHtml(m.host)})</span>
+  container.innerHTML = `
+    <div class="picker-list-header">
+      <span class="picker-check"></span>
+      <span>Name</span>
+      <span>Host</span>
+      <span>Port</span>
+    </div>
+    ${appState.machines.map(m => `
+    <label class="picker-list-row">
+      <span class="picker-check"><input type="checkbox" class="machine-pick" value="${m.id}" ${selected.has(m.id) ? 'checked' : ''}></span>
+      <span class="picker-name">${escapeHtml(m.name)}</span>
+      <span class="picker-detail">${escapeHtml(m.ssh_user)}@${escapeHtml(m.host)}</span>
+      <span class="picker-detail">${escapeHtml(String(m.port || 22))}</span>
     </label>
-  `).join('');
+    `).join('')}`;
 }
 
 function resetActionForm() {
@@ -889,7 +904,6 @@ async function handleActionSubmit(e) {
     if (!action.source || !action.destination) return showError('rsync needs source + destination');
   } else {
     action.command = document.getElementById('deploy-command').value.trim();
-    if (!action.command) return showError('SSH needs command');
   }
 
   try {
@@ -926,12 +940,11 @@ function renderScriptsList() {
     return;
   }
   container.innerHTML = appState.scripts.map(name => {
-    const buttons = [];
+    const buttons = [
+      `<button class="btn btn-small btn-primary" data-edit-script="${escapeHtml(name)}">Edit</button>`,
+    ];
     if (appState.isStaff) {
-      buttons.push(`<button class="btn btn-small btn-primary" data-edit-script="${escapeHtml(name)}">Edit</button>`);
       buttons.push(`<button class="btn btn-small btn-danger" data-del-script="${escapeHtml(name)}">Delete</button>`);
-    } else {
-      buttons.push(`<button class="btn btn-small btn-primary" data-view-script="${escapeHtml(name)}">View</button>`);
     }
     return `
     <div class="script-item">
@@ -943,9 +956,6 @@ function renderScriptsList() {
 
   container.querySelectorAll('[data-edit-script]').forEach(btn => {
     btn.addEventListener('click', () => editScript(btn.dataset.editScript));
-  });
-  container.querySelectorAll('[data-view-script]').forEach(btn => {
-    btn.addEventListener('click', () => editScript(btn.dataset.viewScript));
   });
   container.querySelectorAll('[data-del-script]').forEach(btn => {
     btn.addEventListener('click', () => confirmDelete('script', btn.dataset.delScript));
@@ -960,10 +970,9 @@ async function editScript(name) {
     document.getElementById('script-name').value = data.name;
     document.getElementById('script-name').disabled = true;
     document.getElementById('script-content').value = data.content;
-    document.getElementById('script-content').readOnly = !appState.isStaff;
-    document.getElementById('script-submit-btn').classList.toggle('hidden', !appState.isStaff);
-    document.getElementById('script-modal-title').textContent =
-      appState.isStaff ? `Edit: ${name}` : `View: ${name}`;
+    document.getElementById('script-content').readOnly = false;
+    document.getElementById('script-submit-btn').classList.remove('hidden');
+    document.getElementById('script-modal-title').textContent = `Edit: ${name}`;
     openModal('script-modal');
   } catch (err) {
     showError(err.message);
@@ -1020,24 +1029,26 @@ function renderMachinesList() {
     container.innerHTML = '<p class="empty-state">No deployment machines yet. Add one — actions deploy to these machines and run their scripts on them.</p>';
     return;
   }
-  container.innerHTML = appState.machines.map(m => {
-    const portLabel = m.port && Number(m.port) !== 22 ? `:${m.port}` : '';
-    return `
-    <div class="action-item">
-      <div class="item-info">
-        <div class="item-name">${escapeHtml(m.name)}</div>
-        <div class="item-details">
-          ${escapeHtml(m.ssh_user)}@${escapeHtml(m.host)}${portLabel}${m.ssh_key ? ' · key: ' + escapeHtml(m.ssh_key) : ''}
-        </div>
-        <span class="action-type-badge deploy">machine</span>
-      </div>
-      <div class="item-actions">
-        <button class="btn btn-small btn-primary" data-edit-machine="${m.id}">Edit</button>
-        <button class="btn btn-small btn-danger" data-del-machine="${m.id}">Delete</button>
-      </div>
+  container.innerHTML = `
+    <div class="machines-header">
+      <span>Name</span>
+      <span>Host</span>
+      <span>Port</span>
+      <span></span>
     </div>
-  `;
-  }).join('');
+    ${appState.machines.map(m => {
+      const port = m.port && Number(m.port) !== 22 ? m.port : '22';
+      return `
+      <div class="machine-row">
+        <span class="machine-name" data-label="Name">${escapeHtml(m.name)}</span>
+        <span class="machine-host" data-label="Host">${escapeHtml(m.ssh_user)}@${escapeHtml(m.host)}</span>
+        <span class="machine-port" data-label="Port">${escapeHtml(String(port))}</span>
+        <span class="machine-actions">
+          <button class="btn btn-small btn-primary" data-edit-machine="${m.id}">Edit</button>
+          <button class="btn btn-small btn-danger" data-del-machine="${m.id}">Delete</button>
+        </span>
+      </div>`;
+    }).join('')}`;
 
   container.querySelectorAll('[data-edit-machine]').forEach(btn => {
     btn.addEventListener('click', () => editMachine(parseInt(btn.dataset.editMachine, 10)));
@@ -1061,7 +1072,6 @@ function renderSshKeysList() {
         <div class="item-details">
           ${escapeHtml(k.fingerprint)}${k.machine_uses ? ' · in use by ' + k.machine_uses + ' machine(s)' : ''}
         </div>
-        <span class="action-type-badge deploy">ssh key</span>
       </div>
       <div class="item-actions">
         <button class="btn btn-small btn-danger" data-del-key="${k.id}">Delete</button>
@@ -1146,24 +1156,46 @@ function renderLogsList() {
     container.innerHTML = '<p class="empty-state">No logs yet</p>';
     return;
   }
-  container.innerHTML = appState.logs.map(log => {
-    const date = new Date(log.mtime);
-    const sizeKB = (log.size / 1024).toFixed(1);
-    return `
-      <div class="log-item">
-        <div class="item-info">
-          <div class="item-name">${escapeHtml(log.name)}</div>
-          <div class="item-details">${date.toLocaleString()} · ${sizeKB} KB</div>
-        </div>
-        <div class="item-actions">
+  container.innerHTML = `
+    <div class="logs-header">
+      <span>Repo</span>
+      <span>Keyword</span>
+      <span>Status</span>
+      <span>Size</span>
+      <span></span>
+    </div>
+    ${appState.logs.map(log => {
+      const date = new Date(log.mtime);
+      const sizeKB = (log.size / 1024).toFixed(1);
+      const repo = log.repo_name || log.name.split('_')[0] || '—';
+      const statusClass = log.status ? log.status.toLowerCase() : '';
+      return `
+      <div class="log-row" data-log="${escapeHtml(log.name)}" data-run-id="${log.run_id ?? ''}" title="${escapeHtml(date.toLocaleString())}">
+        <span class="log-repo" data-label="Repo">${escapeHtml(repo)}</span>
+        <span class="log-keyword" data-label="Keyword">${escapeHtml(log.keyword || '—')}</span>
+        <span class="log-status ${escapeHtml(statusClass)}" data-label="Status">${escapeHtml(log.status || '—')}</span>
+        <span class="log-size" data-label="Size">${sizeKB} KB</span>
+        <span class="machine-actions">
           <button class="btn btn-small btn-primary" data-view-log="${escapeHtml(log.name)}">View</button>
-        </div>
-      </div>
-    `;
-  }).join('');
+        </span>
+      </div>`;
+    }).join('')}`;
 
+  const openLog = row => {
+    const runId = row.dataset.runId;
+    if (runId) openRunDetails(parseInt(runId, 10));
+    else viewLog(row.dataset.log);
+  };
+  container.querySelectorAll('.log-row').forEach(row => {
+    row.addEventListener('click', () => openLog(row));
+  });
   container.querySelectorAll('[data-view-log]').forEach(btn => {
-    btn.addEventListener('click', () => viewLog(btn.dataset.viewLog));
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const runId = btn.closest('.log-row').dataset.runId;
+      if (runId) openRunDetails(parseInt(runId, 10));
+      else viewLog(btn.dataset.viewLog);
+    });
   });
 }
 
@@ -1535,25 +1567,27 @@ function renderNotifications() {
     container.innerHTML = '<p class="empty-state">No notification targets yet. Add one to get SMS, email or chat alerts for builds, deploys, timeouts and poll errors.</p>';
     return;
   }
-  container.innerHTML = targets.map(t => {
-    const buttons = t.enabled
-      ? `<button class="btn btn-small" data-test-notification="${t.id}">Test</button>`
-      : '';
-    return `
-      <div class="action-item">
-        <div class="item-info">
-          <div class="item-name">${escapeHtml(t.name)} ${t.enabled ? '' : '· DISABLED'}</div>
-          <div class="item-details">${escapeHtml(t.type)} · events: ${escapeHtml((t.events || []).join(', ') || 'none')}</div>
-          <span class="action-type-badge deploy">${escapeHtml(t.type)}</span>
-        </div>
-        <div class="item-actions">
-          ${buttons}
+  container.innerHTML = `
+    <div class="notif-header">
+      <span>Name</span>
+      <span>Type</span>
+      <span>Status</span>
+      <span></span>
+    </div>
+    ${targets.map(t => {
+      const status = t.enabled ? 'Enabled' : 'Disabled';
+      return `
+      <div class="notif-row">
+        <span class="notif-name" data-label="Name">${escapeHtml(t.name)}</span>
+        <span class="notif-type" data-label="Type">${escapeHtml(t.type)}</span>
+        <span class="notif-status ${t.enabled ? 'on' : 'off'}" data-label="Status">${escapeHtml(status)}</span>
+        <span class="machine-actions">
+          ${t.enabled ? `<button class="btn btn-small" data-test-notification="${t.id}">Test</button>` : ''}
           <button class="btn btn-small btn-primary" data-edit-notification="${t.id}">Edit</button>
           <button class="btn btn-small btn-danger" data-del-notification="${t.id}">Delete</button>
-        </div>
-      </div>
-    `;
-  }).join('');
+        </span>
+      </div>`;
+    }).join('')}`;
 
   container.querySelectorAll('[data-test-notification]').forEach(btn => {
     btn.addEventListener('click', () => testNotification(parseInt(btn.dataset.testNotification, 10)));

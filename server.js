@@ -296,9 +296,9 @@ const NOTIFY_EVENT_LABELS = {
   poll_error: 'Poll error',
 };
 
-/** Send a message to every enabled notification target of a user that subscribes to `event`. */
-async function notifyUser(userId, event, payload) {
-  const targets = db.listNotifications(userId).filter(t =>
+/** Send a message to every enabled notification target that subscribes to `event`. */
+async function notifyUser(event, payload) {
+  const targets = db.listNotifications().filter(t =>
     t.enabled && Array.isArray(t.events) && t.events.includes(event)
   );
   if (!targets.length) return { sent: 0 };
@@ -329,13 +329,12 @@ async function notifyUser(userId, event, payload) {
   return { sent, failed: failed.length };
 }
 
-function notifyJobEvent(userId, event, job, extra = {}) {
-  if (!userId) return;
+function notifyJobEvent(event, job, extra = {}) {
   const status = event === 'job_success' ? 'success'
     : event === 'job_failure' ? 'fail'
     : event === 'job_timeout' ? 'timeout' : 'start';
   const repo = job.repo_id ? db.getRepoById(job.repo_id) : null;
-  notifyUser(userId, event, {
+  notifyUser(event, {
     title: `${job.name} ${event.replace('job_', '')}`,
     repo: job.repo,
     repo_slug: repo ? repo.slug : null,
@@ -348,23 +347,19 @@ function notifyJobEvent(userId, event, job, extra = {}) {
   }).catch(err => console.warn('[NOTIFY]', event, err.message));
 }
 
-/** Broadcast a job event to every user's subscribed notification targets. */
+/** Broadcast a job event to every subscribed notification target. */
 function notifyAllUsers(event, job, extra = {}) {
-  for (const u of db.listUsers()) {
-    notifyJobEvent(u.id, event, job, extra);
-  }
+  notifyJobEvent(event, job, extra);
 }
 
 function notifyPollError(repo, error) {
-  for (const u of db.listUsers()) {
-    notifyUser(u.id, 'poll_error', {
-      title: `Poll error - ${repo.full_name}`,
-      message: `Commit polling failed for ${repo.full_name}: ${error}`,
-      repo: repo.full_name,
-      ok: false,
-      event: 'poll_error',
-    }).catch(err => console.warn('[NOTIFY] poll_error', err.message));
-  }
+  notifyUser('poll_error', {
+    title: `Poll error - ${repo.full_name}`,
+    message: `Commit polling failed for ${repo.full_name}: ${error}`,
+    repo: repo.full_name,
+    ok: false,
+    event: 'poll_error',
+  }).catch(err => console.warn('[NOTIFY] poll_error', err.message));
 }
 
 // Send job notifications to the targets explicitly selected on an action.
@@ -374,11 +369,9 @@ async function sendActionNotifications(job, extra = {}) {
   const action = job.action || {};
   const ids = Array.isArray(action.notification_target_ids) ? action.notification_target_ids : [];
   if (!ids.length) return { sent: 0 };
-  const ownerId = action.user_id;
-  if (!ownerId) return { sent: 0 };
 
   const targets = ids
-    .map(id => db.getNotification(id, ownerId))
+    .map(id => db.getNotification(id))
     .filter(Boolean)
     .filter(t => t.enabled);
   if (!targets.length) return { sent: 0 };
@@ -571,7 +564,7 @@ function writeToLog(logPath, data) {
 
 function getLogFilesList() {
   try {
-    return fs.readdirSync(LOGS_DIR)
+    const logs = fs.readdirSync(LOGS_DIR)
       .map(f => {
         try {
           const st = fs.statSync(path.join(LOGS_DIR, f));
@@ -583,6 +576,17 @@ function getLogFilesList() {
       .filter(Boolean)
       .sort((a, b) => b.mtime - a.mtime)
       .slice(0, MAX_LOG_FILES);
+    const meta = db.getRunMetaByLogFiles(logs.map(l => l.name));
+    for (const l of logs) {
+      const m = meta[l.name];
+      if (m) {
+        l.run_id = m.run_id;
+        l.repo_name = m.repo_name;
+        l.keyword = m.keyword;
+        l.status = m.status;
+      }
+    }
+    return logs;
   } catch {
     return [];
   }
@@ -1164,9 +1168,9 @@ function runRsyncDeploy({ action, machine, logPath }, callback) {
 
 function runSshDeploy({ action, machine, logPath }, callback) {
   const { command } = action;
-  if (!command) {
-    writeToLog(logPath, '[ERROR] Missing SSH command\n');
-    return callback(new Error('Missing required parameters'));
+  if (!command || !command.trim()) {
+    writeToLog(logPath, '[SSH] No command specified — skipping SSH deploy step\n');
+    return callback(null);
   }
   const err = machineHostCheck(machine, logPath);
   if (err) return callback(new Error(err));
@@ -1257,7 +1261,7 @@ function validateActionBody(action) {
     const normSource = String(action.source).replace(/^\.\//, '');
     if (normSource.includes('..') || normSource.startsWith('/')) return 'Invalid rsync source path';
   }
-  if (action.method === 'ssh' && !action.command) return 'ssh requires command';
+  if (action.method === 'ssh' && !action.command) action.command = '';
 
   if (action.notification_target_ids !== undefined) {
     if (!Array.isArray(action.notification_target_ids)) return 'Invalid notification targets';
@@ -1536,7 +1540,7 @@ function sanitizeNotificationBody(body) {
 
 app.get('/api/notifications', requireAuth, (req, res) => {
   res.json({
-    targets: db.listNotifications(req.user.id),
+    targets: db.listNotifications(),
     events: db.NOTIFICATION_EVENTS,
     types: db.NOTIFICATION_TYPES,
     status_webhook: `/webhook/status/${db.getStatusToken(req.user.id)}`,
@@ -1553,7 +1557,7 @@ app.post('/api/notifications', requireAuth, (req, res) => {
 
 app.patch('/api/notifications/:id', requireAuth, (req, res) => {
   const id = parseInt(req.params.id, 10);
-  const existing = db.getNotification(id, req.user.id);
+  const existing = db.getNotification(id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
   const fields = {};
@@ -1592,14 +1596,14 @@ app.patch('/api/notifications/:id', requireAuth, (req, res) => {
   }
   if (body.enabled !== undefined) fields.enabled = !!body.enabled;
 
-  const target = db.updateNotification(id, req.user.id, fields);
+  const target = db.updateNotification(id, fields);
   db.audit(req.user, 'notification_update', { id, name: target.name }, clientIp(req));
   res.json(target);
 });
 
 app.delete('/api/notifications/:id', requireAuth, (req, res) => {
   const id = parseInt(req.params.id, 10);
-  if (!db.deleteNotification(id, req.user.id)) {
+  if (!db.deleteNotification(id)) {
     return res.status(404).json({ error: 'Not found' });
   }
   db.audit(req.user, 'notification_delete', { id }, clientIp(req));
@@ -1607,7 +1611,7 @@ app.delete('/api/notifications/:id', requireAuth, (req, res) => {
 });
 
 app.post('/api/notifications/:id/test', requireAuth, (req, res) => {
-  const target = db.getNotification(parseInt(req.params.id, 10), req.user.id);
+  const target = db.getNotification(parseInt(req.params.id, 10));
   if (!target) return res.status(404).json({ error: 'Not found' });
 
   notify.send(target, {
@@ -1749,7 +1753,7 @@ function allowStatusReport(token) {
 }
 
 function sendStatusReport(user, payload) {
-  const targets = db.listNotifications(user.id).filter(t => t.enabled);
+  const targets = db.listNotifications().filter(t => t.enabled);
   if (!targets.length) return Promise.resolve({ sent: 0, failed: 0 });
   const message = [payload.message || '', payload.details || ''].filter(Boolean).join('\n');
   const base = {
@@ -1940,7 +1944,7 @@ app.get('/api/repos', (req, res) => {
   res.json(db.listRepos().map(r => publicRepoView(r, req.user.role)));
 });
 
-app.post('/api/repos', requireStaff, (req, res) => {
+app.post('/api/repos', requireAuth, (req, res) => {
   const {
     name, full_name, provider, webhook_secret, enabled,
     git_username, git_token, clone_url,
@@ -2010,7 +2014,7 @@ app.get('/api/repos/:id', (req, res) => {
   res.json(publicRepoView(repo, req.user.role));
 });
 
-app.patch('/api/repos/:id', requireStaff, (req, res) => {
+app.patch('/api/repos/:id', requireAuth, (req, res) => {
   const id = parseInt(req.params.id, 10);
   const existing = db.getRepoById(id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
@@ -2140,7 +2144,7 @@ app.put('/api/repos/:id/actions/:keyword', requireAuth, (req, res) => {
 
   const targetIds = [...new Set((body.notification_target_ids || []).map(Number))];
   for (const id of targetIds) {
-    if (!db.getNotification(id, req.user.id)) {
+    if (!db.getNotification(id)) {
       return res.status(400).json({ error: 'Notification target not found' });
     }
   }
@@ -2349,7 +2353,7 @@ app.get('/api/scripts/:name', (req, res) => {
   res.json({ name: req.params.name, content });
 });
 
-app.post('/api/scripts/:name', requireStaff, (req, res) => {
+app.post('/api/scripts/:name', requireAuth, (req, res) => {
   const name = req.params.name;
   const { content } = req.body || {};
   if (!isValidScriptName(name)) return res.status(400).json({ error: 'Invalid script name' });

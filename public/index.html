@@ -185,7 +185,7 @@
         <!-- REPOS -->
         <section id="repos-tab" class="tab-content active">
             <div class="tab-header">
-                <button id="add-repo-btn" class="btn btn-primary" data-staff="1">+ Add Repo</button>
+                <button id="add-repo-btn" class="btn btn-primary">+ Add Repo</button>
             </div>
             <div id="repos-list" class="actions-list">
                 <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
@@ -206,7 +206,7 @@
         <!-- SCRIPTS -->
         <section id="scripts-tab" class="tab-content">
             <div class="tab-header">
-                <button id="create-script-btn" class="btn btn-primary" data-staff="1">+ Create Script</button>
+                <button id="create-script-btn" class="btn btn-primary">+ Create Script</button>
             </div>
             <div id="scripts-list" class="scripts-list">
                 <div class="inline-loading"><div class="loading-spinner sm"></div> Loading…</div>
@@ -566,7 +566,7 @@
                 <div class="form-divider">Deploy</div>
                 <div class="form-group">
                     <label>Deployment Machines</label>
-                    <div id="action-machines-picker" class="checkbox-grid machine-picker">
+                    <div id="action-machines-picker" class="picker-list machine-picker">
                         <p class="empty-state">No machines yet</p>
                     </div>
                     <span class="help-text">Pick at least one machine. The action deploys to each selected machine, then runs its script on that machine. Machines are managed by DevOps in the Machines tab.</span>
@@ -587,9 +587,9 @@
                     <input type="text" id="deploy-destination" placeholder="/var/www/app/">
                 </div>
                 <div id="ssh-fields" class="form-group hidden">
-                    <label for="deploy-command" style="margin-top: 16px;">Command</label>
+                    <label for="deploy-command" style="margin-top: 16px;">Command (optional)</label>
                     <textarea id="deploy-command" rows="3" placeholder="cd /app && npm run deploy"></textarea>
-                    <span class="help-text">Runs on each deployment machine via SSH, before the script.</span>
+                    <span class="help-text">Runs on each deployment machine via SSH, before the script. Leave empty to skip the SSH step entirely.</span>
                 </div>
 
                 <div class="form-divider">Script</div>
@@ -607,7 +607,7 @@
                 <div class="form-divider">Notifications</div>
                 <div class="form-group">
                     <label>Notification Targets</label>
-                    <div id="action-notify-picker" class="checkbox-grid">
+                    <div id="action-notify-picker" class="picker-list">
                         <p class="empty-state">Loading your notification targets…</p>
                     </div>
                     <span class="help-text">Targets selected here get a notification when this action finishes — separate from their "Notify on events" subscriptions. Only <em>enabled</em> targets are actually notified; disabled ones are skipped.</span>

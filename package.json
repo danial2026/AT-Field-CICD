@@ -1,6 +1,6 @@
 {
   "name": "at-field-ci",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "AT FIELD CICD - CI/CD platform with a web dashboard. Builds, tests, and deploys with strong isolation and controlled pipelines.",
   "main": "server.js",
   "type": "commonjs",

@@ -617,7 +617,7 @@ header h1 {
 .form-group textarea:focus {
   outline: none;
   border-color: var(--text-primary);
-  background-color: var(--white-05);
+  background-color: var(--bg-primary);
 }
 
 .password-input {
@@ -1271,12 +1271,11 @@ input[type="file"]::file-selector-button {
 }
 
 input[type="file"]::file-selector-button:hover {
-  background-color: var(--white-05);
   border-color: var(--white-30);
 }
 
 input[type="file"]::file-selector-button:active {
-  background-color: var(--white-10);
+  border-color: var(--text-primary);
 }
 
 input[type="checkbox"] {
@@ -1619,7 +1618,7 @@ input[type="checkbox"]:focus-visible {
 /* DASHBOARD / STATS */
 
 .select-inline {
-  background: var(--bg-surface);
+  background: var(--bg-primary);
   color: var(--text-primary);
   border: 1px solid var(--white-10);
   border-radius: 8px;
@@ -2024,4 +2023,257 @@ textarea:focus {
 
 .about-links .btn {
   text-decoration: none;
+}
+
+/* MACHINES COLUMN LIST */
+
+.machines-header,
+.machine-row,
+.notif-header,
+.notif-row {
+  display: grid;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+}
+
+.machines-header,
+.notif-header,
+.logs-header,
+.picker-list-header {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+}
+
+.notif-header,
+.picker-list-header {
+  border-bottom: 1px solid var(--divider);
+}
+
+.machines-header,
+.machine-row {
+  grid-template-columns: 1fr 1fr 80px 140px;
+}
+
+.notif-header,
+.notif-row {
+  grid-template-columns: 1.2fr 0.8fr 90px 210px;
+}
+
+.logs-header,
+.log-row {
+  display: grid;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  grid-template-columns: 1.2fr 1fr 90px 70px 130px;
+}
+
+.machine-row,
+.notif-row,
+.log-row {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--white-10);
+  border-radius: 12px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.machine-row:hover,
+.notif-row:hover,
+.log-row:hover {
+  border-color: var(--text-primary);
+  background-color: var(--white-05);
+}
+
+.machine-name,
+.notif-name,
+.log-repo {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.machine-host,
+.machine-port,
+.notif-type,
+.log-keyword,
+.log-size {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.notif-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.notif-status.on {
+  color: var(--success);
+}
+
+.notif-status.off {
+  color: var(--warning);
+}
+
+.log-status {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.log-status.success { color: var(--success); }
+.log-status.fail,
+.log-status.error { color: var(--error); }
+.log-status.timeout { color: var(--warning); }
+.log-status.running { color: var(--info); }
+
+.machine-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.machine-actions .btn {
+  flex: 0 0 auto;
+}
+
+/* PICKER LISTS (action form: machines + notification targets) */
+
+.picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.picker-list-header,
+.picker-list .picker-list-row {
+  display: grid;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  grid-template-columns: 24px 1fr 1.2fr 0.9fr;
+}
+
+.picker-list-header {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+  border-bottom: 1px solid var(--divider);
+}
+
+.picker-list .picker-list-row {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--white-10);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: 0;
+}
+
+.picker-list .picker-list-row:hover {
+  border-color: var(--text-primary);
+  background-color: var(--white-05);
+}
+
+.picker-list .picker-list-row:has(input:checked) {
+  border-color: var(--text-primary);
+}
+
+.picker-list .picker-list-row:has(input:checked) .picker-name {
+  color: var(--text-primary);
+}
+
+.picker-list .picker-list-row:has(input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.picker-list .picker-list-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  transform: translateY(-1px);
+  accent-color: var(--text-primary);
+}
+
+.picker-name {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-primary);
+  transition: color 0.2s ease;
+}
+
+.picker-detail {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.pick-status {
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.pick-status.on {
+  color: var(--success);
+}
+
+.pick-status.off {
+  color: var(--warning);
+}
+
+@media (max-width: 768px) {
+  .machines-header,
+  .notif-header,
+  .logs-header,
+  .picker-list-header {
+    display: none;
+  }
+
+  .machine-row,
+  .notif-row,
+  .log-row,
+  .picker-list .picker-list-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  [data-label]::before {
+    content: attr(data-label) ': ';
+    color: var(--text-secondary);
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .machine-actions {
+    justify-content: flex-start;
+    margin-top: 4px;
+  }
+
+  .picker-list .picker-list-row {
+    grid-template-columns: 24px 1fr;
+  }
+
+  .picker-check {
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
 }

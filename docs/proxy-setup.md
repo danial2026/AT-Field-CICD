@@ -1,6 +1,6 @@
 # Server Proxy Setup — Fixing GitHub access on a filtered connection
 
-> **Proxy scripts version:** `1.0.0` · **App version:** `0.0.4`
+> **Proxy scripts version:** `1.0.0` · **App version:** `0.0.5`
 > Scripts: `scripts/proxy/mac-setup-tinyproxy.sh`,
 > `scripts/proxy/server-setup-proxy.sh`, `scripts/proxy/server-remove-proxy.sh`
 

@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.0.5] - 2026-08-15
+
+### Notifications are team-shared
+- Notification targets are no longer per-user: every authenticated account sees
+  **all** targets in the Notifications tab, and any of them can be created,
+  edited, tested or deleted by any logged-in user (`user_id` is kept only as a
+  creator stamp).
+- Delivery is now global: job events (start/success/failure/timeout), poll
+  errors, action-linked notifications and status reports notify **every**
+  enabled target subscribed to the event, instead of only the run owner's
+  targets. The old "broadcast to every user" loops (which would have sent
+  duplicates under the new model) were removed.
+- Action-linked notification validation no longer restricts
+  `notification_target_ids` to the editing user's own targets.
+
+### Developer accounts can manage CI/CD resources
+- Developer accounts can now **add and edit** repos (`POST`/`PATCH
+  `/api/repos` → `requireAuth`) — previously staff-only. Deletion, secret
+  reveal and commit-poll stay staff-only.
+- Scripts: developers can **create and edit** scripts (`POST
+  /api/scripts/:name` → `requireAuth`); the action modal's inline script
+  template editor is no longer read-only for developers. Script deletion stays
+  staff-only.
+- UI: `+ Add Repo`, repo `Edit`, `+ Create Script` and script `Edit` buttons
+  are now shown to every authenticated user. Delete buttons remain staff-only.
+- Machines, SSH keys, Settings, Users and Audit stay staff-only (server +
+  UI).
+
+### UI polish (black & white)
+- Action popup pickers (Deployment Machines / Notification Targets): checked
+  rows lost the green tint — selection is now minimal (white border +
+  checkbox only, no background).
+- Notification targets picker keeps its **colored** status column (green
+  Enabled / yellow Disabled); the notifications table status and the logs
+  status columns are now colored text too (success green, fail/error red,
+  timeout yellow, running blue).
+- Logs tab is now a machine-style column list (Repo | Keyword | Status |
+  Size | View): click a row (or View) to open the full run-details modal
+  (keyword, type, repo, trigger, started/finished, exit code, job ID) with the
+  log content. Modified column removed (timestamp in the row tooltip).
+  `/api/logs` now joins each log file to its `job_runs` row for repo, keyword
+  and status.
+- Machines table: **Key column removed**; header divider line removed.
+- Notifications table: **Events column removed**; actions column widened so
+  the Status column no longer sits under the Test button.
+- Repositories tab: Git Provider type badges removed. Machines tab: "ssh key"
+  tags on the key list removed.
+- Text fields (inputs, selects, textareas, script editors, copy inputs, file
+  buttons) all use the app's pure black background (`--bg-primary`).
+
+### Docs & Packaging
+- Version bumped to `0.0.5` in `package.json` / `package-lock.json`.
+- `README.md` version badge and `docs/proxy-setup.md` app-version reference
+  updated; `SECURITY.md` RBAC table reflects developer repo/script/notification
+  permissions and shared notification targets.
+- All `screenshots/` regenerated.
+
 ## [0.0.4] - 2026-08-15
 
 ### Dashboard UI
