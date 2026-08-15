@@ -543,10 +543,73 @@
                     <span class="help-text">PEM / OpenSSH private key (id_rsa, id_ed25519, …). Encrypted with the master key before it is stored.</span>
                 </div>
                 <div class="form-actions">
+                    <button type="button" id="key-help-btn" class="btn">Setup Guide</button>
                     <button type="button" class="btn" data-modal="key-modal">Cancel</button>
                     <button type="submit" class="btn btn-primary">Upload Key</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- SSH KEY SETUP GUIDE MODAL -->
+    <div id="key-help-modal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2>Set up an SSH key</h2>
+                <button class="close-btn" data-modal="key-help-modal" type="button">&times;</button>
+            </div>
+            <div class="modal-body guide">
+                <p class="modal-lead">AT Field CI/CD uses SSH keys to connect to your deployment machines.</p>
+                <p>You need <strong>two files</strong>:</p>
+                <ul>
+                    <li><strong>Private key</strong> — stays secret and is uploaded to AT Field CI/CD.</li>
+                    <li><strong>Public key</strong> — added to the server you want AT Field CI/CD to deploy to.</li>
+                </ul>
+
+                <h3>1. Generate a key</h3>
+                <p>Run this on your computer:</p>
+                <pre>ssh-keygen -t ed25519 -f ~/.ssh/at-field-deploy</pre>
+                <p>When asked for a passphrase, you can leave it empty by pressing <strong>Enter</strong>.</p>
+                <p>This creates:</p>
+                <pre>~/.ssh/at-field-deploy       ← Private key
+~/.ssh/at-field-deploy.pub   ← Public key</pre>
+
+                <h3>2. Add the public key to your server</h3>
+                <p>Copy the contents of:</p>
+                <pre>cat ~/.ssh/at-field-deploy.pub</pre>
+                <p>Then add that entire line to the deployment user's:</p>
+                <pre>~/.ssh/authorized_keys</pre>
+                <p>on the target server.</p>
+                <p>For example:</p>
+                <pre>ssh-copy-id -i ~/.ssh/at-field-deploy.pub user@your-server</pre>
+
+                <h3>3. Test the key</h3>
+                <p>Before adding it to AT Field CI/CD, verify that it works:</p>
+                <pre>ssh -i ~/.ssh/at-field-deploy user@your-server</pre>
+                <p>If you can connect without entering a password, the key is ready.</p>
+
+                <h3>4. Add it to AT Field CI/CD</h3>
+                <p>Open:</p>
+                <p><strong>Machines → Add Machine</strong></p>
+                <p>Enter:</p>
+                <ul>
+                    <li><strong>Host</strong>: your server hostname or IP</li>
+                    <li><strong>Port</strong>: usually <code>22</code></li>
+                    <li><strong>Username</strong>: the SSH user</li>
+                    <li><strong>Private Key</strong>: paste the contents of <code>~/.ssh/at-field-deploy</code></li>
+                </ul>
+
+                <div class="guide-warning">
+                    <h3>Important</h3>
+                    <p><strong>Never upload <code>at-field-deploy.pub</code> as the private key.</strong></p>
+                    <p>The <code>.pub</code> file belongs on the server. The file without <code>.pub</code> is the private key used by AT Field CI/CD.</p>
+                    <p>Keep the private key secret. Anyone who obtains it may be able to access your deployment server.</p>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn" data-modal="key-help-modal">Close</button>
+                </div>
+            </div>
         </div>
     </div>
 

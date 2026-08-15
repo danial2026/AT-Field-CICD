@@ -2009,6 +2009,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('key-form').reset();
     openModal('key-modal');
   });
+  document.getElementById('key-help-btn').addEventListener('click', () => {
+    openModal('key-help-modal');
+  });
   document.getElementById('key-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = document.getElementById('key-name').value.trim();
