@@ -1,4 +1,4 @@
-# <img src="public/at-field-icon.svg" width="34" height="34" alt="AT FIELD CICD icon" style="vertical-align: middle; margin-right: 10px;"> AT FIELD CICD
+<h1><img src="public/at-field-icon.svg" width="34" height="34" style="vertical-align: middle; margin-top: -4px;" alt=""> AT FIELD CICD</h1>
 
 ![Version](https://img.shields.io/badge/version-0.0.4-blue)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-green)
