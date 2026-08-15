@@ -1,4 +1,7 @@
-<h1 align="center"><img src="public/at-field-icon.svg" width="64" height="64" style="vertical-align: middle;" alt=""> AT FIELD CICD</h1>
+<div align="center" style="display: flex; align-items: center; justify-content: center;">
+  <img src="public/at-field-icon.svg" width="64" height="64" alt="">
+  <span style="font-size: 2em; font-weight: bold; margin-left: 12px;">AT FIELD CICD</span>
+</div>
 
 ![Version](https://img.shields.io/badge/version-0.0.4-blue)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-green)
