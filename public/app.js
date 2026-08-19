@@ -715,11 +715,16 @@ function populateNotifyPicker(selectedIds = []) {
   if (!container) return;
   const selected = new Set(selectedIds.map(Number));
   const targets = appState.notifications.targets || [];
+  const validIds = new Set(targets.map(t => t.id));
+  const orphaned = selectedIds.filter(id => !validIds.has(Number(id)));
   if (!targets.length) {
     container.innerHTML = '<p class="empty-state">No notification targets yet — add one in the Notifications tab.</p>';
     return;
   }
-  container.innerHTML = `
+  const orphanNote = orphaned.length
+    ? `<p class="empty-state">${orphaned.length} previously selected target(s) no longer exist — pick targets below or the custom template will have no effect.</p>`
+    : '';
+  container.innerHTML = orphanNote + `
     <div class="picker-list-header">
       <span class="picker-check"></span>
       <span>Name</span>
@@ -903,6 +908,9 @@ async function handleActionSubmit(e) {
   if (notifyIds.length) action.notification_target_ids = notifyIds;
   if (notifyTemplate.trim() && notifyTemplate.trim() !== DEFAULT_NOTIFY_TEMPLATE) {
     action.notification_template = notifyTemplate.trim();
+    if (!notifyIds.length) {
+      showToast('Custom message template saved, but no notification target is selected — it only applies to targets picked below.');
+    }
   }
 
   const content = document.getElementById('action-script-content').value;

@@ -737,7 +737,7 @@ docker compose up -d</pre>
                         <textarea id="action-notify-template" data-editor class="monospace" rows="4" spellcheck="false"></textarea>
                         <button type="button" id="action-notify-template-reset" class="btn btn-small">Reset</button>
                     </div>
-                    <span class="help-text">Replaces the default message. Placeholders like <span class="monospace">{{title}} {{message}} {{repo}} {{keyword}} {{status}} {{duration}} {{commit}} {{trigger}}</span> are filled from the job result.</span>
+                    <span class="help-text">Replaces the default message for the targets selected above. Placeholders like <span class="monospace">{{title}} {{message}} {{repo}} {{keyword}} {{status}} {{duration}} {{commit}} {{trigger}}</span> are filled from the job result. Only applies to targets picked above — if none are picked, the template has no effect.</span>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn" data-modal="action-modal">Cancel</button>
