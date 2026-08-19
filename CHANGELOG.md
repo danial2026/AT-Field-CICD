@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.0.6] - 2026-08-19
+
+### Action notifications simplified
+- **Removed the per-action message template.** The *Custom message template
+  (optional)* field is gone from the action editor, and
+  `notification_template` is no longer accepted, stored or applied by the
+  server. Action-linked notifications now always use the target's own
+  message template (or the built-in default) — set it on the **Notification
+  Target** instead.
+- Stale `notification_template` values were stripped from existing actions in
+  the database.
+- Notification delivery is more reliable: per-target failures are caught and
+  audited individually instead of failing the whole batch, and a target whose
+  event subscription already covers the job status is skipped to avoid
+  duplicate notifications.
+- Notification payloads now include `job_id`.
+
+### Action scripts
+- Actions can carry their own customized script copy: editing the script
+  template inside the action stores a per-action override and never modifies
+  the shared template file, and an unchanged save keeps the override.
+
+### Notifications UI
+- The notifications list gained an **Events** column with human-readable
+  labels, and warns when a target has no events and will never fire on job
+  alerts. Job success is checked by default on new targets.
+
+### Editor
+- Textareas are edited with a Monaco-based multiline editor
+  (`public/editor.js`, bundled via esbuild); `npm run build:editor` rebuilds
+  the vendor bundle. esbuild and monaco-editor added as dev dependencies.
+
+### UX and fixes
+- **SSH key setup guide**: a *Setup Guide* button in the upload-key modal
+  walks through generating, installing and testing a key.
+- Better poll error logging with fetch URL, cause and repo context.
+- Notification template rendering is safer: unknown placeholders stay literal
+  or render empty instead of breaking the message.
+- Build scripts updated to `docker-compose` syntax with echo section headers.
+
 ## [0.0.5] - 2026-08-15
 
 ### Notifications are team-shared

@@ -3,7 +3,7 @@
   <span style="font-size: 2em; font-weight: bold; margin-left: 12px;">AT FIELD CICD</span>
 </div>
 
-![Version](https://img.shields.io/badge/version-0.0.5-blue)
+![Version](https://img.shields.io/badge/version-0.0.6-blue)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
