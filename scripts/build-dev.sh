@@ -37,7 +37,7 @@ echo "==============================="
 echo " BUILD_DEV ($(date -u +%FT%TZ))"
 echo "==============================="
 
-# -- 1. ENVIRONMENT CHECKS --------------------------------------------------
+echo "-- 1. ENVIRONMENT CHECKS ----------------"
 command -v git >/dev/null 2>&1 || die "git is required"
 for tool in go node npm; do
   [ -x "$(command -v $tool)" ] && info "$tool: $($tool --version 2>/dev/null | head -1)" || true
@@ -45,7 +45,7 @@ done
 info "repo: ${CI_REPO:-<unknown>}  commit: ${CI_COMMIT:-<unknown>}  branch: $BRANCH"
 [ -n "$REPO_URL" ] || die "no clone URL (set clone_url on the repo or CI_CLONE_URL)"
 
-# -- 2. CLONE / CHECKOUT ----------------------------------------------------
+echo "-- 2. CLONE / CHECKOUT ----------------"
 rm -rf "$WORKDIR"
 git clone "$REPO_URL" "$WORKDIR"
 git -C "$WORKDIR" checkout "$BRANCH" 2>/dev/null || git -C "$WORKDIR" checkout -b "$BRANCH"
@@ -53,7 +53,7 @@ git -C "$WORKDIR" checkout "${CI_COMMIT:-HEAD}"
 git -C "$WORKDIR" submodule update --init --recursive 2>/dev/null || true
 cd "$WORKDIR"
 
-# -- 3. BUILD ----------------------------------------------------------------
+echo "-- 3. BUILD ----------------"
 # Uncomment the block that matches your stack and adjust paths/commands.
 # The other block is provided for reference.
 
@@ -73,7 +73,7 @@ info "building (dev)..."
 echo ""                                                        # <- remove me
 echo "BUILD STEP COMMENTED OUT - uncomment a stack block above" # <- remove me
 
-# -- 4. DEPLOY ---------------------------------------------------------------
+echo "-- 4. DEPLOY ----------------"
 # Uncomment one of the sections below. Pick what fits your setup.
 
 ## A) Simple: copy a package to a shared location -----------------------------

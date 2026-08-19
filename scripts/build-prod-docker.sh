@@ -11,7 +11,7 @@
 #        it is redeployed automatically (up -d).
 #      If it was NOT running:
 #        only the image is updated - the container is left stopped so you
-#        can start it manually later (docker compose up -d).
+#        can start it manually later (docker-compose up -d).
 #
 # VARIABLES TO CHANGE
 #   PROJECT_DIR   where your repo (with Dockerfile / docker-compose.yml) lives
@@ -51,36 +51,35 @@ echo "==============================="
 
 command -v docker >/dev/null 2>&1 || die "docker is required"
 
-# -- 1. WAS THE CONTAINER RUNNING? -------------------------------------------
+echo "-- 1. WAS THE CONTAINER RUNNING? ----------------"
 # WAS_RUNNING=false
-# if docker compose -f "$COMPOSE_FILE" --project-directory "$PROJECT_DIR" ps -q "$SERVICE_NAME" >/dev/null 2>&1 \
-#    && [ -n "$(docker compose -f "$COMPOSE_FILE" --project-directory "$PROJECT_DIR" ps -q "$SERVICE_NAME")" ]; then
-#   state=$(docker inspect -f '{{.State.Running}}' "$(docker compose -f "$COMPOSE_FILE" --project-directory "$PROJECT_DIR" ps -q "$SERVICE_NAME")" 2>/dev/null || echo false)
+# if docker-compose -f "$COMPOSE_FILE" --project-directory "$PROJECT_DIR" ps -q "$SERVICE_NAME" >/dev/null 2>&1 \
+#    && [ -n "$(docker-compose -f "$COMPOSE_FILE" --project-directory "$PROJECT_DIR" ps -q "$SERVICE_NAME")" ]; then
+#   state=$(docker inspect -f '{{.State.Running}}' "$(docker-compose -f "$COMPOSE_FILE" --project-directory "$PROJECT_DIR" ps -q "$SERVICE_NAME")" 2>/dev/null || echo false)
 #   WAS_RUNNING=$state
 # fi
 # info "container was running before build: $WAS_RUNNING"
 WAS_RUNNING=false
 
-# -- 2. GET THE CODE ----------------------------------------------------------
+echo "-- 2. GET THE CODE ----------------"
 # cd "$PROJECT_DIR"
 # git fetch --all --prune
 # git checkout "$GIT_BRANCH"
 # git pull --ff-only
 # git checkout "${CI_COMMIT:-HEAD}"
 
-# -- 3. BUILD / REBUILD THE IMAGE ---------------------------------------------
+echo "-- 3. BUILD / REBUILD THE IMAGE ----------------"
 # docker build -t "${CI_REPO:-myapp}:${IMAGE_TAG}" .
-# docker compose -f "$COMPOSE_FILE" build "$SERVICE_NAME"
-# docker compose -f "$COMPOSE_FILE" push "$SERVICE_NAME"   # if you use a registry
+# docker-compose -f "$COMPOSE_FILE" build "$SERVICE_NAME"
+# docker-compose -f "$COMPOSE_FILE" push "$SERVICE_NAME"   # if you use a registry
 
-# -- 4. DEPLOY ONLY IF IT WAS RUNNING BEFORE ---------------------------------
+echo "-- 4. DEPLOY ONLY IF IT WAS RUNNING BEFORE ----------------"
 # if [ "$WAS_RUNNING" = "true" ]; then
-#   docker compose -f "$COMPOSE_FILE" up -d --no-deps --force-recreate "$SERVICE_NAME"
-#   docker image prune -f
+#   docker-compose -f "$COMPOSE_FILE" up -d --no-deps --force-recreate "$SERVICE_NAME"
 #   info "redeployed $SERVICE_NAME (was running before build)"
 # else
 #   info "container was not running - image updated. Start manually:"
-#   info "  docker compose -f $PROJECT_DIR/$COMPOSE_FILE up -d $SERVICE_NAME"
+#   info "  docker-compose -f $PROJECT_DIR/$COMPOSE_FILE up -d $SERVICE_NAME"
 # fi
 
 echo "==============================="
