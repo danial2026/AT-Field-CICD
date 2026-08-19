@@ -545,6 +545,9 @@ function renderActionsList() {
     const details = isCombined
       ? `Machines: ${machineNames} · Script: ${action.script}`
       : `Script: ${action.script} (runs on CI host)`;
+    const customLabel = typeof action.script_content === 'string' && action.script_content.trim()
+      ? ' · customized copy (template untouched)'
+      : '';
     const notifyIds = action.notification_target_ids || [];
     let notifyLabel = '';
     if (notifyIds.length) {
@@ -561,7 +564,7 @@ function renderActionsList() {
       <div class="action-item">
         <div class="item-info">
           <div class="item-name">${escapeHtml(action.keyword)}</div>
-          <div class="item-details">${escapeHtml(details + notifyLabel)}</div>
+          <div class="item-details">${escapeHtml(details + notifyLabel + customLabel)}</div>
           <span class="action-type-badge ${action.type}">${escapeHtml(typeLabel)}</span>
         </div>
         <div class="item-actions">${buttons.join('')}</div>
@@ -740,12 +743,17 @@ function showDeployMethodFields(method) {
   document.getElementById('ssh-fields').classList.toggle('hidden', method !== 'ssh');
 }
 
+function setActionScriptHint(customized) {
+  document.getElementById('action-script-editor-hint').textContent = customized
+    ? 'Customized copy stored with this action only — the template file is never modified.'
+    : 'Template only — edit it to fit your build. Your changes are stored with this action only; the template file is never modified.';
+}
+
 function updateActionModalPermissions() {
   const editor = document.getElementById('action-script-content');
   if (!editor) return;
   editor.readOnly = false;
-  document.getElementById('action-script-editor-hint').textContent =
-    'Template only — edit it to fit your build. Changes are saved to the script.';
+  setActionScriptHint(false);
 }
 
 function populateMachinePicker(selectedIds = []) {
@@ -818,28 +826,37 @@ function editAction(keyword) {
   }
 
   populateScriptSelect(action.script);
-  loadActionScriptEditor(action.script || '');
+  updateActionModalPermissions();
+  loadActionScriptEditor(action.script || '', action);
 
   document.getElementById('action-modal-title').textContent = 'Edit Action';
-  updateActionModalPermissions();
   openModal('action-modal');
   ensureNotificationTargets().then(() => populateNotifyPicker(action.notification_target_ids || []));
 }
 
-async function loadActionScriptEditor(scriptName) {
+async function loadActionScriptEditor(scriptName, action) {
   const editor = document.getElementById('action-script-content');
   if (!scriptName) {
     actionScriptOriginal = ACTION_SCRIPT_TEMPLATE;
     editor.value = ACTION_SCRIPT_TEMPLATE;
+    setActionScriptHint(false);
+    return;
+  }
+  if (action && typeof action.script_content === 'string' && action.script_content.trim()) {
+    actionScriptOriginal = action.script_content;
+    editor.value = action.script_content;
+    setActionScriptHint(true);
     return;
   }
   try {
     const data = await apiCall('GET', `/api/scripts/${encodeURIComponent(scriptName)}`, null, { silent: true });
     actionScriptOriginal = data.content;
     editor.value = data.content;
+    setActionScriptHint(false);
   } catch {
     actionScriptOriginal = ACTION_SCRIPT_TEMPLATE;
     editor.value = ACTION_SCRIPT_TEMPLATE;
+    setActionScriptHint(false);
   }
 }
 
@@ -890,12 +907,10 @@ async function handleActionSubmit(e) {
 
   const content = document.getElementById('action-script-content').value;
   if (content !== actionScriptOriginal) {
-    try {
-      await apiCall('POST', `/api/scripts/${encodeURIComponent(script.replace(/\.sh$/, ''))}`, { content }, { loadingText: 'Saving script template…' });
-      actionScriptOriginal = content;
-    } catch (err) {
-      return showError(`Script save failed: ${err.message}`);
-    }
+    // Store the edit as a per-action override in the DB. The shared
+    // template file under scripts/ is never modified.
+    action.script_content = content;
+    actionScriptOriginal = content;
   }
 
   if (method === 'rsync') {

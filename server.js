@@ -976,24 +976,53 @@ function defaultGitHost(provider) {
   }
 }
 
-function runScriptJob(job, logPath, callback) {
-  const scriptName = normalizeScriptPath(job.action.script);
+/**
+ * Resolve the file an action job should execute. If the action carries a
+ * per-action script override (script_content, stored in the DB), it is
+ * materialized to a temp file that is cleaned up after the job. Otherwise the
+ * shared template file under scripts/ is used and never modified.
+ */
+function scriptFileFor(action, logPath) {
+  const scriptName = normalizeScriptPath(action.script);
   if (!scriptName) {
     writeToLog(logPath, '[ERROR] Invalid script name\n');
-    return callback(new Error('Invalid script name'));
+    return { error: new Error('Invalid script name') };
+  }
+
+  if (typeof action.script_content === 'string' && action.script_content.trim()) {
+    try {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'at-field-action-'));
+      const file = path.join(dir, `${scriptName.replace(/\.sh$/, '')}-custom.sh`);
+      fs.writeFileSync(file, action.script_content, { mode: 0o700 });
+      return {
+        path: file,
+        scriptName: `${scriptName} (custom, stored in DB)`,
+        cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
+      };
+    } catch (e) {
+      writeToLog(logPath, `[ERROR] Cannot materialize custom script: ${e.message}\n`);
+      return { error: new Error('Cannot materialize custom script') };
+    }
   }
 
   const scriptPath = path.join(SCRIPTS_DIR, scriptName);
   if (!fs.existsSync(scriptPath)) {
     writeToLog(logPath, `[ERROR] Script not found: ${scriptName}\n`);
-    return callback(new Error('Script not found'));
+    return { error: new Error('Script not found') };
   }
 
   const resolved = path.resolve(scriptPath);
   if (!resolved.startsWith(path.resolve(SCRIPTS_DIR) + path.sep) && resolved !== path.resolve(SCRIPTS_DIR)) {
     writeToLog(logPath, '[ERROR] Path traversal blocked\n');
-    return callback(new Error('Path traversal blocked'));
+    return { error: new Error('Path traversal blocked') };
   }
+
+  return { path: scriptPath, scriptName, cleanup: null };
+}
+
+function runScriptJob(job, logPath, callback) {
+  const { path: scriptPath, scriptName, cleanup, error } = scriptFileFor(job.action, logPath);
+  if (error) return callback(error);
 
   if (job.repo_id) {
     const r = db.getRepoById(job.repo_id);
@@ -1009,10 +1038,12 @@ function runScriptJob(job, logPath, callback) {
   child.stdout.on('data', d => writeToLog(logPath, d.toString('utf8')));
   child.stderr.on('data', d => writeToLog(logPath, '[STDERR] ' + d.toString('utf8')));
   child.on('error', err => {
+    if (cleanup) { try { cleanup(); } catch { /* best effort */ } }
     writeToLog(logPath, `[ERROR] spawn: ${err.message}\n`);
     callback(err);
   });
   child.on('close', (code, signal) => {
+    if (cleanup) { try { cleanup(); } catch { /* best effort */ } }
     writeToLog(logPath, `[${new Date().toISOString()}] Exit code: ${code}${signal ? ` (signal: ${signal})` : ''}\n`);
     if (code === 0) return callback(null);
     const err = new Error(`Exit code: ${code}${signal ? ` (signal: ${signal})` : ''}`);
@@ -1048,21 +1079,18 @@ function runDeployJob(job, logPath, callback) {
     return callback(new Error('No script configured'));
   }
 
-  const scriptName = normalizeScriptPath(action.script);
-  if (!scriptName) {
-    writeToLog(logPath, '[ERROR] Invalid script name\n');
-    return callback(new Error('Invalid script name'));
-  }
-  const scriptPath = path.join(SCRIPTS_DIR, scriptName);
-  if (!fs.existsSync(scriptPath)) {
-    writeToLog(logPath, `[ERROR] Script not found: ${scriptName}\n`);
-    return callback(new Error('Script not found'));
-  }
+  const { path: scriptPath, scriptName, cleanup, error: scriptFileError } = scriptFileFor(action, logPath);
+  if (scriptFileError) return callback(scriptFileError);
+
+  const finish = (err) => {
+    if (cleanup) { try { cleanup(); } catch { /* best effort */ } }
+    callback(err);
+  };
 
   let i = 0;
   const nextMachine = (err) => {
-    if (err) return callback(err);
-    if (i >= machines.length) return callback(null);
+    if (err) return finish(err);
+    if (i >= machines.length) return finish(null);
     const machine = machines[i++];
 
     const key = materializeSshKey(machine);
@@ -1288,6 +1316,10 @@ function validateActionBody(action) {
     if (typeof action.notification_template !== 'string') return 'Invalid notification template';
     if (action.notification_template.length > 2000) return 'Notification template too long';
   }
+  if (action.script_content !== undefined) {
+    if (typeof action.script_content !== 'string') return 'Invalid script content';
+    if (action.script_content.length > 500000) return 'Script content too long';
+  }
   return null;
 }
 
@@ -1308,6 +1340,14 @@ function actionConfigFromBody(action) {
   }
   if (typeof action.notification_template === 'string' && action.notification_template.trim()) {
     cfg.notification_template = action.notification_template.trim().slice(0, 2000);
+  }
+  // Per-action script override, stored in the DB. The shared template file
+  // under scripts/ is NEVER written from an action save.
+  if (typeof action.script_content === 'string') {
+    const templateContent = readScript(cfg.script);
+    if (action.script_content.trim() && action.script_content !== templateContent) {
+      cfg.script_content = action.script_content;
+    }
   }
   return cfg;
 }
