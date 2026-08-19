@@ -459,7 +459,7 @@ curl -s -b "$COOKIE_JAR" -X POST -H 'Content-Type: application/json' \
   -d '{"content":"#!/bin/bash\necho NOTIFY_OK\n"}' \
   "$BASE_URL/api/scripts/notify-test" > /dev/null
 curl -s -b "$COOKIE_JAR" -X PUT -H 'Content-Type: application/json' \
-  -d '{"type":"deploy","machine_ids":['"$MACHINE_ID"'],"method":"ssh","command":"echo smoke-deploy-step","script":"notify-test.sh","notification_target_ids":['"$NOTIF_ID"'],"notification_template":"ACTION-NOTIFY {{status}} {{keyword}} ({{duration}})"}' \
+  -d '{"type":"deploy","machine_ids":['"$MACHINE_ID"'],"method":"ssh","command":"echo smoke-deploy-step","script":"notify-test.sh","notification_target_ids":['"$NOTIF_ID"']}' \
   "$BASE_URL/api/repos/$REPO_ID/actions/NOTIFY_TEST" > /dev/null
 curl -s -b "$COOKIE_JAR" -X POST "$BASE_URL/api/repos/$REPO_ID/actions/NOTIFY_TEST/run" > /dev/null
 sleep 3
@@ -474,8 +474,8 @@ else
   pass
 fi
 
-test_case "Action-linked notification sent with custom template"
-if [ -s "$CAPTURE_LOG" ] && grep -q "ACTION-NOTIFY " "$CAPTURE_LOG"; then
+test_case "Action-linked notification sent with target template"
+if [ -s "$CAPTURE_LOG" ] && grep -q "TARGET-TPL " "$CAPTURE_LOG"; then
   pass
 else
   fail "action-linked notify missing: $(cat "$CAPTURE_LOG" 2>/dev/null)"

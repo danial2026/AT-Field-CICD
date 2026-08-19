@@ -418,10 +418,6 @@ async function sendActionNotifications(job, extra = {}) {
       return null;
     }
     const t = { ...target, config: { ...(target.config || {}) } };
-    if (action.notification_template) {
-      delete t.message_template;
-      t.config.message_template = action.notification_template;
-    }
     try {
       await notify.send(t, payload);
       sent += 1;
@@ -1342,10 +1338,6 @@ function validateActionBody(action) {
     if (nids.some(id => !Number.isInteger(id) || id <= 0)) return 'Invalid notification target id';
     if (nids.length > 20) return 'Too many notification targets';
   }
-  if (action.notification_template !== undefined) {
-    if (typeof action.notification_template !== 'string') return 'Invalid notification template';
-    if (action.notification_template.length > 2000) return 'Notification template too long';
-  }
   if (action.script_content !== undefined) {
     if (typeof action.script_content !== 'string') return 'Invalid script content';
     if (action.script_content.length > 500000) return 'Script content too long';
@@ -1367,9 +1359,6 @@ function actionConfigFromBody(action) {
   }
   if (Array.isArray(action.notification_target_ids)) {
     cfg.notification_target_ids = [...new Set(action.notification_target_ids.map(Number))];
-  }
-  if (typeof action.notification_template === 'string' && action.notification_template.trim()) {
-    cfg.notification_template = action.notification_template.trim().slice(0, 2000);
   }
   // Per-action script override, stored in the DB. The shared template file
   // under scripts/ is NEVER written from an action save.

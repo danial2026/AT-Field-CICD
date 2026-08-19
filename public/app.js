@@ -797,7 +797,6 @@ function resetActionForm() {
   showDeployMethodFields('');
   populateMachinePicker();
   populateNotifyPicker();
-  document.getElementById('action-notify-template').value = DEFAULT_NOTIFY_TEMPLATE;
   document.getElementById('action-script-content').value = '';
   actionScriptOriginal = '';
   actionHasScriptOverride = false;
@@ -823,8 +822,6 @@ function editAction(keyword) {
 
   populateMachinePicker(action.machine_ids || []);
   populateNotifyPicker(action.notification_target_ids || []);
-  document.getElementById('action-notify-template').value =
-    action.notification_template || DEFAULT_NOTIFY_TEMPLATE;
   const method = action.method || '';
   document.getElementById('deploy-method').value = method;
   showDeployMethodFields(method);
@@ -912,14 +909,7 @@ async function handleActionSubmit(e) {
   };
 
   const notifyIds = Array.from(document.querySelectorAll('.notify-pick:checked')).map(cb => parseInt(cb.value, 10));
-  const notifyTemplate = document.getElementById('action-notify-template').value;
   if (notifyIds.length) action.notification_target_ids = notifyIds;
-  if (notifyTemplate.trim() && notifyTemplate.trim() !== DEFAULT_NOTIFY_TEMPLATE) {
-    action.notification_template = notifyTemplate.trim();
-    if (!notifyIds.length) {
-      showToast('Custom message template saved, but no notification target is selected — it only applies to targets picked below.');
-    }
-  }
 
   const content = document.getElementById('action-script-content').value;
   if (actionHasScriptOverride || content !== actionScriptOriginal) {
@@ -2103,9 +2093,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('notification-template-reset').addEventListener('click', () => {
     document.getElementById('notification-message-template').value = DEFAULT_NOTIFY_TEMPLATE;
-  });
-  document.getElementById('action-notify-template-reset').addEventListener('click', () => {
-    document.getElementById('action-notify-template').value = DEFAULT_NOTIFY_TEMPLATE;
   });
   document.getElementById('notification-type').addEventListener('change', (e) => {
     showNotifFields(e.target.value);
