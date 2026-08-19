@@ -350,6 +350,7 @@ function notifyJobEvent(event, job, extra = {}) {
   const repo = job.repo_id ? db.getRepoById(job.repo_id) : null;
   notifyUser(event, {
     title: `${job.name} ${event.replace('job_', '')}`,
+    job_id: job.id,
     repo: job.repo,
     repo_slug: repo ? repo.slug : null,
     keyword: job.name,
@@ -401,6 +402,7 @@ async function sendActionNotifications(job, extra = {}) {
 
   const payload = {
     title: `${job.name} ${status}`,
+    job_id: job.id,
     message,
     ok: status === 'success',
     event: 'action_notify',
