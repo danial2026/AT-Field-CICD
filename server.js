@@ -312,21 +312,35 @@ async function notifyUser(event, payload) {
 
   let sent = 0;
   const results = await Promise.allSettled(targets.map(async target => {
-    await notify.send(target, {
-      title: `${NOTIFY_EVENT_LABELS[event] || event} - ${payload.title || 'AT FIELD CICD'}`,
-      message,
-      ok: event !== 'job_failure' && event !== 'job_timeout' && event !== 'poll_error',
-      event,
-      ...payload,
-    });
-    sent += 1;
+    try {
+      await notify.send(target, {
+        title: `${NOTIFY_EVENT_LABELS[event] || event} - ${payload.title || 'AT FIELD CICD'}`,
+        message,
+        ok: event !== 'job_failure' && event !== 'job_timeout' && event !== 'poll_error',
+        event,
+        ...payload,
+      });
+      sent += 1;
+      return null;
+    } catch (err) {
+      return { target, error: err };
+    }
   }));
 
-  const failed = results.filter(r => r.status === 'rejected');
-  if (failed.length) {
-    console.warn('[NOTIFY]', event, 'failed targets:', failed.map(r => r.reason?.message || 'error').join('; '));
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value) {
+      const { target, error } = r.value;
+      console.warn('[NOTIFY]', event, 'failed target:', target.name, '-', error.message);
+      db.audit({ id: null, username: 'system' }, 'notify_delivery_fail', {
+        id: target.id,
+        name: target.name,
+        type: target.type,
+        event,
+        error: String(error.message).slice(0, 300),
+      }, 'system');
+    }
   }
-  return { sent, failed: failed.length };
+  return { sent, failed: results.filter(r => r.status === 'fulfilled' && r.value).length };
 }
 
 function notifyJobEvent(event, job, extra = {}) {
@@ -407,15 +421,30 @@ async function sendActionNotifications(job, extra = {}) {
       delete t.message_template;
       t.config.message_template = action.notification_template;
     }
-    await notify.send(t, payload);
-    sent += 1;
+    try {
+      await notify.send(t, payload);
+      sent += 1;
+      return null;
+    } catch (err) {
+      return { target, error: err };
+    }
   }));
 
-  const failed = results.filter(r => r.status === 'rejected');
-  if (failed.length) {
-    console.warn('[NOTIFY] action-linked failed targets:', failed.map(r => r.reason?.message || 'error').join('; '));
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value) {
+      const { target, error } = r.value;
+      console.warn('[NOTIFY] action-linked failed target:', target.name, '-', error.message);
+      db.audit({ id: null, username: 'system' }, 'notify_delivery_fail', {
+        id: target.id,
+        name: target.name,
+        type: target.type,
+        event: 'action_notify',
+        keyword: job.name,
+        error: String(error.message).slice(0, 300),
+      }, 'system');
+    }
   }
-  return { sent, failed: failed.length };
+  return { sent, failed: results.filter(r => r.status === 'fulfilled' && r.value).length };
 }
 
 // JOB RUN TRACKING

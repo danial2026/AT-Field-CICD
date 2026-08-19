@@ -1592,6 +1592,14 @@ async function loadNotifications() {
   }
 }
 
+const NOTIF_EVENT_LABELS = {
+    job_start: 'job started',
+    job_success: 'job succeeded',
+    job_failure: 'job failed',
+    job_timeout: 'job timed out',
+    poll_error: 'poll error',
+  };
+
 function renderNotifications() {
   const { targets, status_webhook } = appState.notifications;
   document.getElementById('status-webhook-url').value = baseUrl() + status_webhook;
@@ -1605,15 +1613,21 @@ function renderNotifications() {
     <div class="notif-header">
       <span>Name</span>
       <span>Type</span>
+      <span>Events</span>
       <span>Status</span>
       <span></span>
     </div>
     ${targets.map(t => {
       const status = t.enabled ? 'Enabled' : 'Disabled';
+      const events = Array.isArray(t.events) ? t.events : [];
+      const eventsLabel = events.length
+        ? events.map(e => NOTIF_EVENT_LABELS[e] || e).join(', ')
+        : '<span class="notif-never">no job events — will never fire on job alerts (action-picked targets still work)</span>';
       return `
       <div class="notif-row">
         <span class="notif-name" data-label="Name">${escapeHtml(t.name)}</span>
         <span class="notif-type" data-label="Type">${escapeHtml(t.type)}</span>
+        <span class="notif-events" data-label="Events">${eventsLabel}</span>
         <span class="notif-status ${t.enabled ? 'on' : 'off'}" data-label="Status">${escapeHtml(status)}</span>
         <span class="machine-actions">
           ${t.enabled ? `<button class="btn btn-small" data-test-notification="${t.id}">Test</button>` : ''}
