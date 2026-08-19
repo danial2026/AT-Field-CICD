@@ -692,6 +692,10 @@ const ACTION_SCRIPT_TEMPLATE = '#!/bin/bash\nset -e\n' +
   '# clone: git clone "$CI_CLONE_AUTH_URL" workdir\n' +
   '# environment: CI_COMMIT_SHA, CI_KEYWORD, CI_REPO_SLUG, CI_TRIGGER\n';
 let actionScriptOriginal = '';
+// True while editing an action that carries a stored per-action script
+// override; forces the override to be re-sent on every save so an unchanged
+// save cannot silently drop it and revert to the shared template.
+let actionHasScriptOverride = false;
 
 // Default notification message template (renders to the standard message).
 // Filled with {{...}} placeholders from the job result payload.
@@ -796,6 +800,7 @@ function resetActionForm() {
   document.getElementById('action-notify-template').value = DEFAULT_NOTIFY_TEMPLATE;
   document.getElementById('action-script-content').value = '';
   actionScriptOriginal = '';
+  actionHasScriptOverride = false;
   document.getElementById('action-modal-title').textContent = 'Add Action';
   updateActionModalPermissions();
   ensureNotificationTargets().then(() => populateNotifyPicker());
@@ -843,16 +848,19 @@ async function loadActionScriptEditor(scriptName, action) {
   const editor = document.getElementById('action-script-content');
   if (!scriptName) {
     actionScriptOriginal = ACTION_SCRIPT_TEMPLATE;
+    actionHasScriptOverride = false;
     editor.value = ACTION_SCRIPT_TEMPLATE;
     setActionScriptHint(false);
     return;
   }
   if (action && typeof action.script_content === 'string' && action.script_content.trim()) {
     actionScriptOriginal = action.script_content;
+    actionHasScriptOverride = true;
     editor.value = action.script_content;
     setActionScriptHint(true);
     return;
   }
+  actionHasScriptOverride = false;
   try {
     const data = await apiCall('GET', `/api/scripts/${encodeURIComponent(scriptName)}`, null, { silent: true });
     actionScriptOriginal = data.content;
@@ -914,9 +922,12 @@ async function handleActionSubmit(e) {
   }
 
   const content = document.getElementById('action-script-content').value;
-  if (content !== actionScriptOriginal) {
+  if (actionHasScriptOverride || content !== actionScriptOriginal) {
     // Store the edit as a per-action override in the DB. The shared
-    // template file under scripts/ is never modified.
+    // template file under scripts/ is never modified. Always re-send an
+    // existing override so an unchanged save keeps it; only a missing
+    // script_content (or one identical to the template) reverts to the
+    // shared template.
     action.script_content = content;
     actionScriptOriginal = content;
   }
