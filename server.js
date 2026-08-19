@@ -303,12 +303,10 @@ async function notifyUser(event, payload) {
   );
   if (!targets.length) return { sent: 0 };
 
-  const message = [
-    payload.message,
-    payload.repo ? `Repo: ${payload.repo}` : null,
-    payload.keyword ? `Keyword: ${payload.keyword}` : null,
-    payload.duration ? `Duration: ${payload.duration}` : null,
-  ].filter(Boolean).join('\n');
+  // Short summary only. Structured fields (repo/keyword/job_id/duration) stay
+  // separate in the payload so message templates that declare their own
+  // "Repo: {{repo}}..." lines don't render the block twice.
+  const message = payload.message || '';
 
   let sent = 0;
   const results = await Promise.allSettled(targets.map(async target => {
@@ -393,12 +391,7 @@ async function sendActionNotifications(job, extra = {}) {
 
   const status = extra.status || 'success';
   const repo = job.repo_id ? db.getRepoById(job.repo_id) : null;
-  const message = [
-    `Job ${status}`,
-    job.repo ? `Repo: ${job.repo}` : null,
-    job.name ? `Keyword: ${job.name}` : null,
-    extra.duration ? `Duration: ${extra.duration}` : null,
-  ].filter(Boolean).join('\n');
+  const message = `Job ${status}`;
 
   const payload = {
     title: `${job.name} ${status}`,
@@ -418,6 +411,12 @@ async function sendActionNotifications(job, extra = {}) {
 
   let sent = 0;
   const results = await Promise.allSettled(targets.map(async target => {
+    // Skip targets that already receive this job event through their own
+    // event subscription - they'd get a duplicate notification otherwise.
+    const eventForStatus = { success: 'job_success', fail: 'job_failure', timeout: 'job_timeout', start: 'job_start' };
+    if (eventForStatus[status] && Array.isArray(target.events) && target.events.includes(eventForStatus[status])) {
+      return null;
+    }
     const t = { ...target, config: { ...(target.config || {}) } };
     if (action.notification_template) {
       delete t.message_template;
